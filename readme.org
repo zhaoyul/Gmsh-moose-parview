@@ -1,0 +1,94 @@
+#+TITLE: GMSH-MOOSE-ParaView 集成仿真环境 (GMP-ISE)
+#+AUTHOR: 研究架构组
+#+OPTIONS: toc:2
+
+* 项目简介
+本项目旨在构建一个高度集成的独立仿真应用, 将 *Gmsh* (前处理/网格生成), *MOOSE* (多物理场求解器) 以及 *ParaView* (后处理/可视化) 整合在统一的 *Qt* 界面之下.
+
+通过深度集成底层 API, 消除传统仿真工作流中碎片化的文件转换与软件切换.
+* 核心设计架构
+
+系统采用五层模块化架构设计, 确保组件间的低耦合与高性能交互:
+
+| 层次 | 名称            | 技术实现          | 核心职责                                     |
+|------+-----------------+-------------------+----------------------------------------------|
+| L1   | 用户交互层 (UI) | Qt 6 / QML / QVTK | 仿真全流程引导与高性能 3D 视图渲染           |
+| L2   | 逻辑控制层      | C++ Controller    | 管理仿真状态机, 异步进程监控 (QProcess)      |
+| L3   | 引擎适配层      | Adapter Layer     | Gmsh API 互操作, libMesh IO, Catalyst 适配器 |
+| L4   | 核心执行层      | Compute Engine    | 并行 MOOSE 求解器, ParaView 后端服务器       |
+| L5   | 基础设施层      | Infrastructure    | MPI 并行支持, PETSc 数学库, Conda 依赖管理   |
+
+* 技术路线选择
+** 1. UI 框架: Qt (C++)
+选择 Qt 而非 Web/Electron 的核心理由:
+
+ 1. *原生可视化性能*: 通过 ~QVTKOpenGLNativeWidget~ 直接嵌入 ParaView 渲染窗口, 实现零拷贝数据展示.
+ 2. *内存共享能力*: 可直接链接 Gmsh C++ API, 在同一进程空间内操作几何对象.
+ 3. *稳健性*: 科学计算工业标准, 支持 MPI 环境下的多线程异步处理.
+
+** 2. 前处理: Gmsh API
+
+ 1. 弃用传统的 ~.geo~ 脚本交互, 全面采用 *Gmsh C++ API*.
+ 2. 利用 *OpenCASCADE (OCC)* 内核进行工业级几何建模与布尔运算.
+ 3. *物理组 (Physical Groups)* 语义映射: 将 GUI 选中的几何实体直接导出为带有物理标签的网格文件 .
+
+
+** 3. 后处理: ParaView Catalyst
+
+ 1. 集成 *ParaView SDK* 实现自定义轻量化可视化终端 .
+ 2. 支持 *Catalyst 2.0 原位分析*: 求解器通过 Conduit 协议在内存中直接向可视化模块传输数据, 大幅减少磁盘 I/O 开销.
+
+* 数据打通协议
+本项目采用"二级打通" 策略, 兼顾兼容性与性能:
+
+** 一级打通: 标准文件级 (Robust Mode)
+
+ * *前处理 -> 求解器*: 导出 ~GMSH ASCII (2.0/4.1)~ 格式. MOOSE 通过 libMesh 的 ~GmshIO~ 类解析网格与物理名称.
+ * *求解器 -> 后处理*: 输出 ~ExodusII (.e)~ 格式. 该格式天然支持瞬态时间序列, 可无缝加载至嵌入式 ParaView 视图.
+
+
+
+** 二级打通: 内存 API 级 (High-Performance Mode)
+
+ * *实时预览*: Gmsh 生成的临时网格直接拷贝至 VTK 数据结构, 实现几何调整时的实时网格预览.
+ * *状态监控: 利用 *ZeroMQ* 或 *WebSockets* 将 MOOSE 的实时收敛残差推送至 Qt 前端绘制动态曲线.
+
+
+
+* 环境准备
+** 依赖管理 (Conda 方案)
+推荐使用 Conda 构建一致的开发环境:
+#+BEGIN_SRC bash
+
+# 创建环境并安装核心依赖
+
+conda create -n gmp-env moose-dev gmsh paraview-sdk qt6-base
+conda activate gmp-env
+#+END_SRC
+
+** 硬件要求
+
+ * 内存: 建议 16GB 以上(调试 MOOSE 需要较大内存) .
+ * 系统: Linux (Ubuntu 22.04+) 或 Windows WSL2 .
+
+
+
+* 构建指南
+项目使用 CMake 作为跨平台构建工具, 旨在桥接 Qt 与科学计算库:
+
+#+BEGIN_SRC cmake
+find_package(Qt6 REQUIRED COMPONENTS Widgets Gui)
+find_package(ParaView REQUIRED)
+find_package(Gmsh REQUIRED)
+
+# 链接 MOOSE/libMesh 路径通常需参考 $MOOSE_DIR 环境变量
+
+#+END_SRC
+
+* 路线图 (Roadmap)
+
+1. [ ] Phase 1: 基于 Qt 嵌入 Gmsh GUI 并生成基础 ~.msh~ 文件.
+2. [ ] Phase 2: 实现 MOOSE ~.i~ 文件自动生成器及 ~mpiexec~ 异步调用.
+3. [ ] Phase 3: 集成 ~QVTKOpenGLNativeWidget~ 实现 ExodusII 结果自动加载.
+4. [ ] Phase 4: 引入 Catalyst 2.0 适配器实现内存级原位分析可视化.
+
