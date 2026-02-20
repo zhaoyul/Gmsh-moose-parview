@@ -8,23 +8,32 @@
 通过深度集成底层 API, 消除传统仿真工作流中碎片化的文件转换与软件切换.
 * 核心设计架构
 
-系统采用五层模块化架构设计, 确保组件间的低耦合与高性能交互:
+系统采用分层 + 进程隔离的架构设计, 确保组件间低耦合与可控的稳定性:
 
-| 层次 | 名称            | 技术实现          | 核心职责                                     |
-|------+-----------------+-------------------+----------------------------------------------|
-| L1   | 用户交互层 (UI) | Qt 6 / QML / QVTK | 仿真全流程引导与高性能 3D 视图渲染           |
-| L2   | 逻辑控制层      | C++ Controller    | 管理仿真状态机, 异步进程监控 (QProcess)      |
-| L3   | 引擎适配层      | Adapter Layer     | Gmsh API 互操作, libMesh IO, Catalyst 适配器 |
-| L4   | 核心执行层      | Compute Engine    | 并行 MOOSE 求解器, ParaView 后端服务器       |
-| L5   | 基础设施层      | Infrastructure    | MPI 并行支持, PETSc 数学库, Conda 依赖管理   |
+| 层次 | 名称            | 技术实现                              | 核心职责                                                     |
+|------+-----------------+---------------------------------------+--------------------------------------------------------------|
+| L1   | 用户交互层 (UI) | Qt 6 Widgets + QVTKOpenGLNativeWidget | 仿真全流程引导与 3D 视图渲染                                 |
+| L2   | 逻辑控制层      | C++/Qt Controller                     | 任务编排、状态机、日志/进度汇聚、异步进程监控 (QProcess)     |
+| L3   | 引擎适配层      | Adapter Layer                         | Gmsh API 互操作、MOOSE 输入生成、数据格式转换                |
+| L4   | 核心执行层      | External Processes                    | MOOSE (MPI 多进程)、ParaView/VTK 渲染管线或 Catalyst In-Situ |
+| L5   | 基础设施层      | Toolchain & Runtime                   | MPI/PETSc/VTK/ParaView SDK, 编译工具链, 可选 Conda 辅助依赖  |
+
+说明:
+
+* MOOSE 建议以 *独立进程* 运行 (MPI 需要), UI 仅负责调度与监控.
+* ParaView 可先以 VTK 渲染结果, 后续再引入 Catalyst 原位分析.
 
 * 技术路线选择
 ** 1. UI 框架: Qt (C++)
 选择 Qt 而非 Web/Electron 的核心理由:
 
- 1. *原生可视化性能*: 通过 ~QVTKOpenGLNativeWidget~ 直接嵌入 ParaView 渲染窗口, 实现零拷贝数据展示.
+ 1. *原生可视化性能*: 通过 ~QVTKOpenGLNativeWidget~ 嵌入 VTK 渲染窗口.
  2. *内存共享能力*: 可直接链接 Gmsh C++ API, 在同一进程空间内操作几何对象.
  3. *稳健性*: 科学计算工业标准, 支持 MPI 环境下的多线程异步处理.
+
+说明:
+
+* MVP 阶段优先使用 Qt Widgets, 避免 QML 与 VTK 深度集成带来的复杂度.
 
 ** 2. 前处理: Gmsh API
 
@@ -32,14 +41,19 @@
  2. 利用 *OpenCASCADE (OCC)* 内核进行工业级几何建模与布尔运算.
  3. *物理组 (Physical Groups)* 语义映射: 将 GUI 选中的几何实体直接导出为带有物理标签的网格文件 .
 
+说明:
 
-** 3. 后处理: ParaView Catalyst
+* Gmsh 自带 GUI 主要基于 FLTK, 本项目采用 *Qt 前端 + Gmsh API* 的方式集成.
+* MOOSE 输入生成时优先通过 Gmsh API 读取物理组; 若未启用 Gmsh, 则从 ~.msh~ 的 ~$PhysicalNames~ 解析.
 
- 1. 集成 *ParaView SDK* 实现自定义轻量化可视化终端 .
- 2. 支持 *Catalyst 2.0 原位分析*: 求解器通过 Conduit 协议在内存中直接向可视化模块传输数据, 大幅减少磁盘 I/O 开销.
 
+** 3. 后处理: ParaView / VTK / Catalyst
+
+ 1. MVP 阶段使用 *VTK* 直接加载 ExodusII, 构建渲染与交互.
+ 2. 进阶阶段集成 *ParaView SDK* 或 *Catalyst 2.0 原位分析*:
+    求解器通过 Conduit 协议在内存中向可视化模块传输数据, 减少磁盘 I/O.
 * 数据打通协议
-本项目采用"二级打通" 策略, 兼顾兼容性与性能:
+本项目采用"二级打通"策略, 兼顾兼容性与性能:
 
 ** 一级打通: 标准文件级 (Robust Mode)
 
@@ -50,45 +64,169 @@
 
 ** 二级打通: 内存 API 级 (High-Performance Mode)
 
- * *实时预览*: Gmsh 生成的临时网格直接拷贝至 VTK 数据结构, 实现几何调整时的实时网格预览.
- * *状态监控: 利用 *ZeroMQ* 或 *WebSockets* 将 MOOSE 的实时收敛残差推送至 Qt 前端绘制动态曲线.
+ * *实时预览*: Gmsh 生成的临时网格转换为 VTK 数据结构, 实现几何调整时的实时网格预览.
+ * *状态监控*: 优先使用 MOOSE 输出日志 + 解析, 若需实时残差曲线再引入 ZeroMQ/WebSockets.
 
+* 平台兼容与运行模式
+** 平台矩阵
 
+| 平台           | UI 运行方式     | MOOSE 求解方式    | 备注                              |
+|----------------+-----------------+-------------------+-----------------------------------|
+| macOS (当前)   | 原生 Qt         | 本机 MPI (可选)   | 主开发平台                        |
+| Linux (Ubuntu) | 原生 Qt         | 本机 MPI          | 生产/部署首选                     |
+| Windows + WSL2 | Windows 原生 Qt | WSL2 内运行 MOOSE | UI/计算隔离, 通过文件共享交换数据 |
+
+** Runner 模式 (求解调度)
+
+ 1. local: 本机执行 (macOS/Linux)
+ 2. wsl: 通过 ~wsl.exe~ 调度 (Windows + WSL2)
+ 3. remote: 通过 SSH 调度 (预留)
+
+说明:
+
+ 1. 默认采用文件级打通 (~.msh -> .e~), 保证跨平台稳定.
+ 2. WSL 不建议承载 GUI, 更适合作为计算后端.
 
 * 环境准备
-** 依赖管理 (Conda 方案)
-推荐使用 Conda 构建一致的开发环境:
+** 依赖管理
+推荐采用 "源码构建 + 最小化 Conda" 的方式:
+
+1. Gmsh / VTK / ParaView 建议源码构建或使用官方 SDK.
+2. MOOSE 建议采用官方源码构建流程 (含 PETSc/MPI). Conda 建议仅用于 toolchain (moose-dev) 与 Python 依赖, 最终可执行仍由源码构建产出.
+3. Conda 仅用于 Python/工具链辅助 (可选).
+
+若启用 ~GMP_ENABLE_MPI=ON~:
+
+* macOS: 建议安装 `open-mpi` (Homebrew)，确保 `mpicxx` 在 PATH 中.
+* Linux/WSL: 安装系统 `openmpi` 或 `mpich` 开发包.
+
+** Gmsh 源码 (submodule)
+Gmsh 作为子模块放在 `external/gmsh`，用于构建 *libgmsh* 并链接到 Qt 前端。
+首次拉取请执行:
+
 #+BEGIN_SRC bash
-
-# 创建环境并安装核心依赖
-
-conda create -n gmp-env moose-dev gmsh paraview-sdk qt6-base
-conda activate gmp-env
+git submodule update --init --recursive
 #+END_SRC
+
+macOS 快速构建示例:
+
+#+BEGIN_SRC bash
+cd external/gmsh
+mkdir -p build && cd build
+cmake -DENABLE_BUILD_DYNAMIC=1 -DENABLE_FLTK=0 ..
+cmake --build . --target install
+#+END_SRC
+
+说明:
+
+* 需要 OpenCASCADE、OpenGL 等依赖；若缺失请先安装对应依赖。
+* 安装后通过 `Gmsh_DIR` 或 `CMAKE_PREFIX_PATH` 让主工程找到 Gmsh。
+
+** MOOSE 源码 (submodule)
+MOOSE 作为子模块放在 `external/moose` (默认跟随 `next` 分支)。
+推荐使用官方 conda 的 *moose-dev* 环境提供 PETSc/MPI 工具链,
+然后从源码构建可执行文件。
+
+macOS/Linux 示例:
+
+#+BEGIN_SRC bash
+conda create -n moose -c https://conda.software.inl.gov/public -c conda-forge moose-dev=<version>=mpich
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate moose
+
+git submodule update --init --recursive
+cd external/moose/test
+make -j "$(sysctl -n hw.ncpu)"   # macOS
+# Linux/WSL: make -j "$(nproc)"
+#+END_SRC
+
+更新子模块到最新版本 (可选):
+
+#+BEGIN_SRC bash
+git submodule update --remote --merge external/gmsh
+git submodule update --remote --merge external/moose
+#+END_SRC
+
+产出可执行:
+
+* `external/moose/test/moose_test-opt`
+* 若需 TensorMechanics/热力耦合等模块, 使用 combined 应用:
+  `external/moose/modules/combined/combined-opt`
+
+UI 自动探测:
+
+* 若未手动设置 `Executable`, 会尝试探测 `external/moose/test/moose_test-opt`.
+* 也可通过环境变量 `GMP_MOOSE_EXEC` 指定路径, 或直接在 UI 中 Pick.
+* 选择 “Thermo-Mechanics” 模板时, 建议切换到 `combined-opt` 以启用 TensorMechanics 模块.
 
 ** 硬件要求
 
  * 内存: 建议 16GB 以上(调试 MOOSE 需要较大内存) .
- * 系统: Linux (Ubuntu 22.04+) 或 Windows WSL2 .
+ * 系统: macOS 13+ / Linux (Ubuntu 22.04+) / Windows WSL2 .
 
 
 
 * 构建指南
-项目使用 CMake 作为跨平台构建工具, 旨在桥接 Qt 与科学计算库:
+项目使用 CMake 作为跨平台构建工具, 以 Qt + VTK 为 MVP 目标:
+
+推荐开关:
+
+#+BEGIN_SRC cmake
+option(GMP_ENABLE_MPI "Enable MPI related features" ON)
+option(GMP_ENABLE_CATALYST "Enable Catalyst in-situ" OFF)
+option(GMP_ENABLE_PARAVIEW "Enable ParaView SDK" OFF)
+option(GMP_ENABLE_GMSH_GUI "Enable embedded Gmsh GUI" OFF)
+option(GMP_ENABLE_WSL_RUNNER "Enable WSL runner (Windows only)" OFF)
+option(GMP_ENABLE_VTK_VIEWER "Enable VTK viewer" OFF)
+#+END_SRC
 
 #+BEGIN_SRC cmake
 find_package(Qt6 REQUIRED COMPONENTS Widgets Gui)
-find_package(ParaView REQUIRED)
+find_package(VTK REQUIRED)
 find_package(Gmsh REQUIRED)
 
-# 链接 MOOSE/libMesh 路径通常需参考 $MOOSE_DIR 环境变量
+# MVP 阶段: MOOSE 作为外部进程运行, 暂不直接链接
 
+#+END_SRC
+
+启用 Gmsh API 示例:
+
+#+BEGIN_SRC bash
+cmake -DGMP_ENABLE_GMSH_GUI=ON -DCMAKE_PREFIX_PATH=/abs/path/to/gmsh/install ..
+cmake --build .
+#+END_SRC
+
+** VTK Viewer 注意事项 (macOS)
+
+macOS 上启用 VTK Viewer 时, 需在 ~QApplication~ 创建前设置默认 OpenGL 格式, 否则可能导致
+VTK 初始化崩溃:
+
+#+BEGIN_SRC cpp
+QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
+QApplication app(argc, argv);
+#+END_SRC
+
+另外, VTK 初始化建议延迟到界面创建后 (例如用 ~QTimer::singleShot(0, ...)~),
+避免在上下文未准备时触发渲染.
+
+或显式指定:
+
+#+BEGIN_SRC bash
+cmake -DGMP_ENABLE_GMSH_GUI=ON -Dgmsh_DIR=/abs/path/to/gmsh/install/share/gmsh ..
+cmake --build .
+#+END_SRC
+
+启用 VTK Viewer 示例:
+
+#+BEGIN_SRC bash
+cmake -DGMP_ENABLE_VTK_VIEWER=ON -DVTK_DIR=/path/to/vtk/lib/cmake/vtk-9.x ..
+cmake --build .
 #+END_SRC
 
 * 路线图 (Roadmap)
 
-1. [ ] Phase 1: 基于 Qt 嵌入 Gmsh GUI 并生成基础 ~.msh~ 文件.
-2. [ ] Phase 2: 实现 MOOSE ~.i~ 文件自动生成器及 ~mpiexec~ 异步调用.
-3. [ ] Phase 3: 集成 ~QVTKOpenGLNativeWidget~ 实现 ExodusII 结果自动加载.
-4. [ ] Phase 4: 引入 Catalyst 2.0 适配器实现内存级原位分析可视化.
-
+1. [ ] Phase 0: 统一开发环境与构建流程, 明确目标平台 (macOS/Linux/Windows WSL).
+2. [ ] Phase 1: Qt 应用框架 + Gmsh C++ API, 生成基础 ~.msh~ 文件.
+3. [ ] Phase 2: MOOSE ~.i~ 文件自动生成器 + ~mpiexec~ 异步调用与日志展示.
+4. [ ] Phase 3: VTK 结果加载 (~ExodusII~) + 基础交互 (切片/颜色映射/时间序列).
+5. [ ] Phase 4: ParaView SDK / Catalyst 2.0 原位分析适配器.

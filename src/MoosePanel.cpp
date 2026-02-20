@@ -1,0 +1,1470 @@
+#include "gmp/MoosePanel.h"
+
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDir>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QRegularExpression>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QSettings>
+#include <QSet>
+#include <QSpinBox>
+#include <QString>
+#include <QVBoxLayout>
+#include <QStringList>
+#include <QProcess>
+#include <QStandardPaths>
+
+#include "gmp/RunSpec.h"
+
+#ifdef GMP_ENABLE_GMSH_GUI
+#include <gmsh.h>
+#endif
+
+namespace gmp {
+
+namespace {
+
+bool is_executable_file(const QString& path) {
+  if (path.isEmpty()) {
+    return false;
+  }
+  const QFileInfo info(path);
+  return info.exists() && info.isFile() && info.isExecutable();
+}
+
+RunnerKind RunnerKindFromIndex(int idx) {
+  switch (idx) {
+    case 1:
+      return RunnerKind::kWsl;
+    case 2:
+      return RunnerKind::kRemote;
+    default:
+      return RunnerKind::kLocal;
+  }
+}
+
+}  // namespace
+
+MoosePanel::MoosePanel(QWidget* parent) : QWidget(parent) {
+  auto* layout = new QVBoxLayout(this);
+
+  auto* title = new QLabel("MOOSE Panel");
+  layout->addWidget(title);
+
+  auto* paths_box = new QGroupBox("Paths");
+  auto* paths_form = new QFormLayout(paths_box);
+
+  exec_path_ = new QComboBox();
+  exec_path_->setEditable(true);
+  exec_path_->setInsertPolicy(QComboBox::NoInsert);
+  exec_path_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  exec_path_->setToolTip("Path to moose executable");
+  if (exec_path_->lineEdit()) {
+    exec_path_->lineEdit()->setPlaceholderText(
+        "Auto-detect MOOSE executable");
+  }
+  auto* pick_exec = new QPushButton("Pick");
+  connect(pick_exec, &QPushButton::clicked, this, &MoosePanel::on_pick_exec);
+  auto* exec_row = new QHBoxLayout();
+  exec_row->addWidget(exec_path_);
+  exec_row->addWidget(pick_exec);
+  auto* exec_container = new QWidget();
+  exec_container->setLayout(exec_row);
+  paths_form->addRow("Executable", exec_container);
+
+  input_path_ = new QLineEdit();
+  input_path_->setPlaceholderText("Input file path (*.i)");
+  input_path_->setText(QDir::currentPath() + "/out/sample.i");
+  auto* pick_input = new QPushButton("Pick");
+  connect(pick_input, &QPushButton::clicked, this, &MoosePanel::on_pick_input);
+  auto* input_row = new QHBoxLayout();
+  input_row->addWidget(input_path_);
+  input_row->addWidget(pick_input);
+  auto* input_container = new QWidget();
+  input_container->setLayout(input_row);
+  paths_form->addRow("Input File", input_container);
+
+  workdir_path_ = new QLineEdit();
+  workdir_path_->setPlaceholderText("Working directory (optional)");
+  workdir_path_->setText(QDir::currentPath());
+  auto* pick_workdir = new QPushButton("Pick");
+  connect(pick_workdir, &QPushButton::clicked, this, &MoosePanel::on_pick_workdir);
+  auto* workdir_row = new QHBoxLayout();
+  workdir_row->addWidget(workdir_path_);
+  workdir_row->addWidget(pick_workdir);
+  auto* workdir_container = new QWidget();
+  workdir_container->setLayout(workdir_row);
+  paths_form->addRow("Work Dir", workdir_container);
+
+  layout->addWidget(paths_box);
+
+  auto* mesh_box = new QGroupBox("Mesh");
+  auto* mesh_form = new QFormLayout(mesh_box);
+  mesh_path_ = new QLineEdit();
+  mesh_path_->setPlaceholderText("Path to mesh file (.msh)");
+  auto* insert_mesh_btn = new QPushButton("Insert Mesh Block");
+  connect(insert_mesh_btn, &QPushButton::clicked, this,
+          &MoosePanel::on_insert_mesh_block);
+  auto* mesh_row = new QHBoxLayout();
+  mesh_row->addWidget(mesh_path_);
+  mesh_row->addWidget(insert_mesh_btn);
+  auto* mesh_container = new QWidget();
+  mesh_container->setLayout(mesh_row);
+  mesh_form->addRow("Mesh File", mesh_container);
+  layout->addWidget(mesh_box);
+
+  auto* groups_box = new QGroupBox("Physical Groups");
+  auto* groups_layout = new QVBoxLayout(groups_box);
+  boundary_list_ = new QPlainTextEdit();
+  boundary_list_->setReadOnly(true);
+  boundary_list_->setPlaceholderText("No boundary groups detected yet.");
+  groups_layout->addWidget(boundary_list_);
+  auto* bc_btn = new QPushButton("Insert BCs From Groups");
+  connect(bc_btn, &QPushButton::clicked, this, &MoosePanel::on_insert_bcs_block);
+  groups_layout->addWidget(bc_btn);
+  layout->addWidget(groups_box);
+
+  auto* run_box = new QGroupBox("Run");
+  auto* run_form = new QFormLayout(run_box);
+
+  use_mpi_ = new QCheckBox("Use mpiexec");
+  use_mpi_->setChecked(false);
+  run_form->addRow("", use_mpi_);
+
+  mpi_ranks_ = new QSpinBox();
+  mpi_ranks_->setRange(1, 4096);
+  mpi_ranks_->setValue(4);
+  run_form->addRow("MPI Ranks", mpi_ranks_);
+
+  runner_kind_ = new QComboBox();
+  runner_kind_->addItem("Local", static_cast<int>(RunnerKind::kLocal));
+  runner_kind_->addItem("WSL", static_cast<int>(RunnerKind::kWsl));
+  runner_kind_->addItem("Remote", static_cast<int>(RunnerKind::kRemote));
+  run_form->addRow("Runner", runner_kind_);
+
+  extra_args_ = new QLineEdit();
+  extra_args_->setPlaceholderText("Extra args (e.g. --n-threads=4)");
+  run_form->addRow("Extra Args", extra_args_);
+
+  layout->addWidget(run_box);
+
+  auto* io_box = new QGroupBox("Input Editor");
+  auto* io_layout = new QVBoxLayout(io_box);
+  auto* template_row = new QHBoxLayout();
+  template_kind_ = new QComboBox();
+  template_kind_->addItem("GeneratedMesh (Transient Diffusion)", "generated");
+  template_kind_->addItem("FileMesh (Transient Diffusion)", "filemesh");
+  template_kind_->addItem("GeneratedMesh (Thermo-Mechanics)", "tm_generated");
+  template_kind_->addItem("FileMesh (Thermo-Mechanics)", "tm_filemesh");
+  auto* apply_template = new QPushButton("Apply Template");
+  connect(apply_template, &QPushButton::clicked, this,
+          &MoosePanel::on_apply_template);
+  template_row->addWidget(new QLabel("Template"));
+  template_row->addWidget(template_kind_);
+  template_row->addWidget(apply_template);
+  template_row->addStretch(1);
+  io_layout->addLayout(template_row);
+
+  input_editor_ = new QPlainTextEdit();
+  input_editor_->setPlainText(template_generated_mesh());
+  io_layout->addWidget(input_editor_);
+
+  auto* io_actions = new QHBoxLayout();
+  auto* write_btn = new QPushButton("Write Input");
+  connect(write_btn, &QPushButton::clicked, this, &MoosePanel::on_write_input);
+  io_actions->addWidget(write_btn);
+  io_actions->addStretch(1);
+  io_layout->addLayout(io_actions);
+
+  layout->addWidget(io_box, 2);
+
+  auto* action_row = new QHBoxLayout();
+  run_btn_ = new QPushButton("Run");
+  check_btn_ = new QPushButton("Check Input");
+  stop_btn_ = new QPushButton("Stop");
+  stop_btn_->setEnabled(false);
+  connect(run_btn_, &QPushButton::clicked, this, &MoosePanel::on_run);
+  connect(check_btn_, &QPushButton::clicked, this, &MoosePanel::on_check_input);
+  connect(stop_btn_, &QPushButton::clicked, this, &MoosePanel::on_stop);
+  action_row->addWidget(run_btn_);
+  action_row->addWidget(check_btn_);
+  action_row->addWidget(stop_btn_);
+  action_row->addStretch(1);
+  layout->addLayout(action_row);
+
+  log_ = new QPlainTextEdit();
+  log_->setReadOnly(true);
+  layout->addWidget(log_, 1);
+
+  append_log("MOOSE panel ready.");
+  load_settings();
+}
+
+void MoosePanel::on_pick_exec() {
+  const QString path = QFileDialog::getOpenFileName(this, "Select MOOSE executable",
+                                                    exec_path_->currentText());
+  if (!path.isEmpty()) {
+    exec_path_->setCurrentText(path);
+    update_exec_history(path);
+  }
+}
+
+void MoosePanel::on_pick_input() {
+  const QString path =
+      QFileDialog::getSaveFileName(this, "Select input file", input_path_->text(),
+                                   "MOOSE Input (*.i)");
+  if (!path.isEmpty()) {
+    input_path_->setText(path);
+    save_settings();
+  }
+}
+
+void MoosePanel::on_pick_workdir() {
+  const QString path =
+      QFileDialog::getExistingDirectory(this, "Select working directory",
+                                        workdir_path_->text());
+  if (!path.isEmpty()) {
+    workdir_path_->setText(path);
+    save_settings();
+  }
+}
+
+void MoosePanel::on_write_input() {
+  const QString out_path = input_path_->text();
+  if (out_path.isEmpty()) {
+    append_log("Input path is empty.");
+    return;
+  }
+
+  QDir().mkpath(QFileInfo(out_path).absolutePath());
+  QFile file(out_path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    append_log("Failed to write input file.");
+    return;
+  }
+  file.write(input_editor_->toPlainText().toUtf8());
+  file.close();
+  append_log("Input file written: " + out_path);
+  save_settings();
+}
+
+void MoosePanel::on_run() {
+  run_task(false);
+}
+
+void MoosePanel::on_stop() {
+  if (!runner_) {
+    return;
+  }
+  runner_->stop();
+}
+
+void MoosePanel::on_check_input() {
+  run_task(true);
+}
+
+void MoosePanel::append_log(const QString& text) {
+  if (log_) {
+    log_->appendPlainText(text);
+  }
+}
+
+void MoosePanel::handle_output(const QString& text) {
+  output_buffer_ += text;
+  int idx = -1;
+  while ((idx = output_buffer_.indexOf('\n')) != -1) {
+    const QString line = output_buffer_.left(idx).trimmed();
+    output_buffer_.remove(0, idx + 1);
+    if (!line.isEmpty()) {
+      append_log(line);
+      const QRegularExpression re(R"m((['"]?)([A-Za-z0-9_./\\-]+\.e)\1)m");
+      auto it = re.globalMatch(line);
+      while (it.hasNext()) {
+        const auto m = it.next();
+        const QString token = m.captured(2);
+        const QString resolved = resolve_exodus_path(token);
+        if (!resolved.isEmpty()) {
+          maybe_emit_exodus(resolved);
+        }
+      }
+    }
+  }
+}
+
+void MoosePanel::flush_output() {
+  if (output_buffer_.isEmpty()) {
+    return;
+  }
+  handle_output("\n");
+}
+
+void MoosePanel::set_running(bool running) {
+  if (run_btn_) {
+    run_btn_->setEnabled(!running);
+  }
+  if (check_btn_) {
+    check_btn_->setEnabled(!running);
+  }
+  if (stop_btn_) {
+    stop_btn_->setEnabled(running);
+  }
+}
+
+void MoosePanel::set_mesh_path(const QString& path) {
+  mesh_path_->setText(path);
+  const QString updated = inject_mesh_block(input_editor_->toPlainText(), path);
+  if (!updated.isEmpty()) {
+    input_editor_->setPlainText(updated);
+    append_log("Mesh path injected into [Mesh] block.");
+  }
+  if (!path.isEmpty()) {
+    set_boundary_groups(read_boundary_groups_from_mesh(path));
+  }
+  save_settings();
+}
+
+void MoosePanel::set_boundary_groups(const QStringList& names) {
+  boundary_names_ = names;
+  boundary_list_->setPlainText(boundary_names_.join("\n"));
+
+  // Auto-update BCs only if current BCs look like the default template.
+  const QString updated =
+      inject_bcs_block(input_editor_->toPlainText(), boundary_names_, false);
+  if (!updated.isEmpty()) {
+    input_editor_->setPlainText(updated);
+    append_log("BCs block updated from physical groups.");
+  }
+  save_settings();
+}
+
+void MoosePanel::on_apply_template() {
+  const QString key = template_kind_->currentData().toString();
+  if (key == "filemesh") {
+    const QString path =
+        mesh_path_->text().isEmpty() ? "path/to/mesh.msh" : mesh_path_->text();
+    input_editor_->setPlainText(template_file_mesh(path));
+  } else if (key == "tm_filemesh") {
+    const QString path =
+        mesh_path_->text().isEmpty() ? "path/to/mesh.msh" : mesh_path_->text();
+    input_editor_->setPlainText(template_tm_file_mesh(path));
+  } else if (key == "tm_generated") {
+    input_editor_->setPlainText(template_tm_generated_mesh());
+  } else {
+    input_editor_->setPlainText(template_generated_mesh());
+  }
+
+  if (key.startsWith("tm_")) {
+    const QString combined =
+        find_exec_in_parents("external/moose/modules/combined/combined-opt", 6);
+    if (!combined.isEmpty()) {
+      update_exec_history(combined);
+      append_log("Thermo-mechanics template selected. Using: " + combined);
+    } else {
+      append_log("Thermo-mechanics template selected, but combined-opt was not found.");
+    }
+  }
+  save_settings();
+}
+
+void MoosePanel::on_insert_mesh_block() {
+  const QString path =
+      mesh_path_->text().isEmpty() ? "path/to/mesh.msh" : mesh_path_->text();
+  const QString updated = inject_mesh_block(input_editor_->toPlainText(), path);
+  if (!updated.isEmpty()) {
+    input_editor_->setPlainText(updated);
+    append_log("Mesh block inserted/updated.");
+  }
+  save_settings();
+}
+
+void MoosePanel::on_insert_bcs_block() {
+  if (boundary_names_.isEmpty()) {
+    append_log("No boundary groups available.");
+    return;
+  }
+  const QString updated =
+      inject_bcs_block(input_editor_->toPlainText(), boundary_names_, true);
+  if (!updated.isEmpty()) {
+    input_editor_->setPlainText(updated);
+    append_log("BCs block inserted/updated.");
+  }
+}
+
+void MoosePanel::run_task(bool check_only) {
+  if (runner_) {
+    append_log("A run is already active.");
+    return;
+  }
+
+  if (exec_path_->currentText().isEmpty()) {
+    append_log("Executable is empty.");
+    return;
+  }
+
+  const QString input_path = input_path_->text();
+  if (input_path.isEmpty()) {
+    append_log("Input file path is empty.");
+    return;
+  }
+
+  if (!QFileInfo::exists(input_path)) {
+    on_write_input();
+  }
+
+  RunSpec spec;
+  const QString exec_path = exec_path_->currentText();
+  const QStringList extra = QProcess::splitCommand(extra_args_->text());
+  if (use_mpi_->isChecked()) {
+    spec.program = "mpiexec";
+    spec.args << "-n" << QString::number(mpi_ranks_->value())
+              << exec_path << "-i" << input_path;
+  } else {
+    spec.program = exec_path;
+    spec.args << "-i" << input_path;
+  }
+  spec.args.append(extra);
+  if (check_only) {
+    spec.args << "--check-input";
+  }
+  spec.working_dir = workdir_path_->text();
+
+  const RunnerKind kind = RunnerKindFromIndex(runner_kind_->currentIndex());
+  runner_ = CreateRunner(kind);
+  if (!runner_) {
+    append_log("Failed to create runner.");
+    return;
+  }
+
+  connect(runner_.get(), &Runner::std_out, this, &MoosePanel::handle_output);
+  connect(runner_.get(), &Runner::std_err, this, &MoosePanel::handle_output);
+  connect(runner_.get(), &Runner::started, this, [this, check_only]() {
+    append_log(check_only ? "Input check started." : "Run started.");
+    set_running(true);
+  });
+  connect(runner_.get(), &Runner::finished, this,
+          [this](int code, QProcess::ExitStatus status) {
+            flush_output();
+            append_log(QString("Run finished. exit=%1 status=%2")
+                           .arg(code)
+                           .arg(status == QProcess::NormalExit ? "Normal" : "Crash"));
+            runner_.reset();
+            set_running(false);
+
+            const QString workdir = workdir_path_->text().isEmpty()
+                                        ? QDir::currentPath()
+                                        : workdir_path_->text();
+            const QString input_dir = QFileInfo(input_path_->text()).absolutePath();
+            QStringList dirs;
+            if (!workdir.isEmpty()) {
+              dirs << workdir;
+            }
+            if (!input_dir.isEmpty() && input_dir != workdir) {
+              dirs << input_dir;
+            }
+            const QStringList history = collect_exodus_files(dirs);
+            const QString exodus = pick_latest_exodus(history);
+            if (!history.isEmpty()) {
+              emit exodus_history(history);
+            }
+            if (!exodus.isEmpty()) {
+              maybe_emit_exodus(exodus);
+            }
+          });
+
+  append_log("Launching: " + spec.program + " " + spec.args.join(" "));
+  runner_->start(spec);
+  update_exec_history(exec_path);
+  save_settings();
+}
+
+QString MoosePanel::resolve_exodus_path(const QString& token) const {
+  QFileInfo fi(token);
+  if (fi.isAbsolute() && fi.exists()) {
+    return fi.absoluteFilePath();
+  }
+  const QString workdir = workdir_path_->text().isEmpty()
+                              ? QDir::currentPath()
+                              : workdir_path_->text();
+  QFileInfo rel(QDir(workdir), token);
+  if (rel.exists()) {
+    return rel.absoluteFilePath();
+  }
+  return QString();
+}
+
+void MoosePanel::maybe_emit_exodus(const QString& path) {
+  if (path.isEmpty()) {
+    return;
+  }
+  if (path == last_exodus_) {
+    return;
+  }
+  last_exodus_ = path;
+  emit exodus_ready(path);
+}
+
+QString MoosePanel::template_generated_mesh() const {
+  return R"([Mesh]
+  type = GeneratedMesh
+  dim = 2
+  nx = 20
+  ny = 20
+[]
+
+[Variables]
+  [./u]
+    family = LAGRANGE
+    order = FIRST
+  [../]
+  [./v]
+    family = LAGRANGE
+    order = FIRST
+  []
+  [../]
+[]
+
+[Functions]
+  [./ic_u]
+    type = ParsedFunction
+    expression = 'sin(3.14159*x)*sin(3.14159*y)'
+  [../]
+  [./ic_v]
+    type = ParsedFunction
+    expression = '0.2*cos(3.14159*x)*cos(3.14159*y)'
+  [../]
+  [./source_u]
+    type = ParsedFunction
+    expression = 'exp(-t)*sin(3.14159*x)*sin(3.14159*y)'
+  [../]
+  [./source_v]
+    type = ParsedFunction
+    expression = '0.1*exp(-0.5*t)*cos(3.14159*x)'
+  [../]
+  [./bc_left]
+    type = ParsedFunction
+    expression = '1.0+0.1*sin(6.28318*t)'
+  [../]
+  [./bc_right]
+    type = ParsedFunction
+    expression = '0.0'
+  [../]
+[]
+
+[ICs]
+  [./u_ic]
+    type = FunctionIC
+    variable = u
+    function = ic_u
+  [../]
+  [./v_ic]
+    type = FunctionIC
+    variable = v
+    function = ic_v
+  [../]
+[]
+
+[Kernels]
+  [./u_dt]
+    type = TimeDerivative
+    variable = u
+  [../]
+  [./u_diff]
+    type = MatDiffusion
+    variable = u
+    diffusivity = diff_u
+  [../]
+  [./u_src]
+    type = BodyForce
+    variable = u
+    function = source_u
+  [../]
+  [./v_dt]
+    type = TimeDerivative
+    variable = v
+  [../]
+  [./v_diff]
+    type = MatDiffusion
+    variable = v
+    diffusivity = diff_v
+  [../]
+  [./v_src]
+    type = BodyForce
+    variable = v
+    function = source_v
+  [../]
+[]
+
+[Materials]
+  [./diffusion]
+    type = GenericConstantMaterial
+    prop_names = 'diff_u diff_v'
+    prop_values = '1.0 0.25'
+  [../]
+[]
+
+[BCs]
+  [./u_left]
+    type = FunctionDirichletBC
+    variable = u
+    boundary = left
+    function = bc_left
+  [../]
+  [./u_right]
+    type = FunctionDirichletBC
+    variable = u
+    boundary = right
+    function = bc_right
+  [../]
+  [./v_left]
+    type = DirichletBC
+    variable = v
+    boundary = left
+    value = 0
+  [../]
+  [./v_right]
+    type = DirichletBC
+    variable = v
+    boundary = right
+    value = 0
+  [../]
+[]
+
+[Postprocessors]
+  [./u_avg]
+    type = ElementAverageValue
+    variable = u
+  [../]
+  [./v_avg]
+    type = ElementAverageValue
+    variable = v
+  [../]
+[]
+
+[Executioner]
+  type = Transient
+  solve_type = NEWTON
+  scheme = 'bdf2'
+  dt = 0.01
+  end_time = 0.2
+[]
+
+[Outputs]
+  exodus = true
+  csv = true
+[]
+)";
+}
+
+QString MoosePanel::template_file_mesh(const QString& mesh_path) const {
+  return QString(R"([Mesh]
+  type = FileMesh
+  file = %1
+[]
+
+[Variables]
+  [./u]
+    family = LAGRANGE
+    order = FIRST
+  [../]
+  [./v]
+    family = LAGRANGE
+    order = FIRST
+  []
+  [../]
+[]
+
+[Functions]
+  [./ic_u]
+    type = ParsedFunction
+    expression = 'sin(3.14159*x)*sin(3.14159*y)'
+  [../]
+  [./ic_v]
+    type = ParsedFunction
+    expression = '0.2*cos(3.14159*x)*cos(3.14159*y)'
+  [../]
+  [./source_u]
+    type = ParsedFunction
+    expression = 'exp(-t)*sin(3.14159*x)*sin(3.14159*y)'
+  [../]
+  [./source_v]
+    type = ParsedFunction
+    expression = '0.1*exp(-0.5*t)*cos(3.14159*x)'
+  [../]
+  [./bc_left]
+    type = ParsedFunction
+    expression = '1.0+0.1*sin(6.28318*t)'
+  [../]
+  [./bc_right]
+    type = ParsedFunction
+    expression = '0.0'
+  [../]
+[]
+
+[ICs]
+  [./u_ic]
+    type = FunctionIC
+    variable = u
+    function = ic_u
+  [../]
+  [./v_ic]
+    type = FunctionIC
+    variable = v
+    function = ic_v
+  [../]
+[]
+
+[Kernels]
+  [./u_dt]
+    type = TimeDerivative
+    variable = u
+  [../]
+  [./u_diff]
+    type = MatDiffusion
+    variable = u
+    diffusivity = diff_u
+  [../]
+  [./u_src]
+    type = BodyForce
+    variable = u
+    function = source_u
+  [../]
+  [./v_dt]
+    type = TimeDerivative
+    variable = v
+  [../]
+  [./v_diff]
+    type = MatDiffusion
+    variable = v
+    diffusivity = diff_v
+  [../]
+  [./v_src]
+    type = BodyForce
+    variable = v
+    function = source_v
+  [../]
+[]
+
+[Materials]
+  [./diffusion]
+    type = GenericConstantMaterial
+    prop_names = 'diff_u diff_v'
+    prop_values = '1.0 0.25'
+  [../]
+[]
+
+[BCs]
+  [./u_left]
+    type = FunctionDirichletBC
+    variable = u
+    boundary = left
+    function = bc_left
+  [../]
+  [./u_right]
+    type = FunctionDirichletBC
+    variable = u
+    boundary = right
+    function = bc_right
+  [../]
+  [./v_left]
+    type = DirichletBC
+    variable = v
+    boundary = left
+    value = 0
+  [../]
+  [./v_right]
+    type = DirichletBC
+    variable = v
+    boundary = right
+    value = 0
+  [../]
+[]
+
+[Postprocessors]
+  [./u_avg]
+    type = ElementAverageValue
+    variable = u
+  [../]
+  [./v_avg]
+    type = ElementAverageValue
+    variable = v
+  [../]
+[]
+
+[Executioner]
+  type = Transient
+  solve_type = NEWTON
+  scheme = 'bdf2'
+  dt = 0.01
+  end_time = 0.2
+[]
+
+[Outputs]
+  exodus = true
+  csv = true
+[]
+)").arg(mesh_path);
+}
+
+QString MoosePanel::template_tm_generated_mesh() const {
+  return R"([Mesh]
+  type = GeneratedMesh
+  dim = 2
+  nx = 30
+  ny = 30
+  xmin = 0
+  xmax = 1
+  ymin = 0
+  ymax = 1
+[]
+
+[Variables]
+  [./T]
+    initial_condition = 300
+  [../]
+  [./disp_x]
+  [../]
+  [./disp_y]
+  [../]
+[]
+
+[AuxVariables]
+  [./sigma_xx]
+    order = CONSTANT
+    family = MONOMIAL
+  [../]
+  [./sigma_yy]
+    order = CONSTANT
+    family = MONOMIAL
+  [../]
+  [./sigma_xy]
+    order = CONSTANT
+    family = MONOMIAL
+  [../]
+[]
+
+[Kernels]
+  active = 'TensorMechanics htcond Q_function'
+  [./htcond]
+    type = HeatConduction
+    variable = T
+  [../]
+  [./TensorMechanics]
+    displacements = 'disp_x disp_y'
+  [../]
+  [./Q_function]
+    type = BodyForce
+    variable = T
+    value = 1
+    function = 50.0*exp(-t)*sin(3.14159*x)*sin(3.14159*y)
+  [../]
+[]
+
+[AuxKernels]
+  [./sigma_xx]
+    type = RankTwoAux
+    variable = sigma_xx
+    rank_two_tensor = stress
+    index_i = 0
+    index_j = 0
+  [../]
+  [./sigma_yy]
+    type = RankTwoAux
+    variable = sigma_yy
+    rank_two_tensor = stress
+    index_i = 1
+    index_j = 1
+  [../]
+  [./sigma_xy]
+    type = RankTwoAux
+    variable = sigma_xy
+    rank_two_tensor = stress
+    index_i = 0
+    index_j = 1
+  [../]
+[]
+
+[BCs]
+  [./temp_left]
+    type = DirichletBC
+    variable = T
+    boundary = left
+    value = 400
+  [../]
+  [./temp_right]
+    type = DirichletBC
+    variable = T
+    boundary = right
+    value = 300
+  [../]
+  [./fix_x]
+    type = DirichletBC
+    variable = disp_x
+    boundary = left
+    value = 0
+  [../]
+  [./fix_y]
+    type = DirichletBC
+    variable = disp_y
+    boundary = bottom
+    value = 0
+  [../]
+[]
+
+[Materials]
+  [./thcond]
+    type = GenericConstantMaterial
+    prop_names = 'thermal_conductivity'
+    prop_values = '1.0'
+  [../]
+  [./elastic]
+    type = ComputeElasticityTensor
+    fill_method = symmetric_isotropic
+    C_ijkl = '2.1e5 0.8e5'
+  [../]
+  [./strain]
+    type = ComputeSmallStrain
+    displacements = 'disp_x disp_y'
+    eigenstrain_names = eigenstrain
+  [../]
+  [./stress]
+    type = ComputeLinearElasticStress
+  [../]
+  [./thermal_strain]
+    type = ComputeThermalExpansionEigenstrain
+    thermal_expansion_coeff = 1e-5
+    temperature = T
+    stress_free_temperature = 300
+    eigenstrain_name = eigenstrain
+  [../]
+[]
+
+[Executioner]
+  type = Transient
+  scheme = bdf2
+  dt = 0.05
+  end_time = 0.5
+  solve_type = PJFNK
+  nl_max_its = 10
+  l_max_its = 30
+  nl_abs_tol = 1e-8
+  l_tol = 1e-4
+[]
+
+[Outputs]
+  exodus = true
+  csv = true
+[]
+)";
+}
+
+QString MoosePanel::template_tm_file_mesh(const QString& mesh_path) const {
+  return QString(R"([Mesh]
+  type = FileMesh
+  file = %1
+[]
+
+[Variables]
+  [./T]
+    initial_condition = 300
+  [../]
+  [./disp_x]
+  [../]
+  [./disp_y]
+  [../]
+[]
+
+[AuxVariables]
+  [./sigma_xx]
+    order = CONSTANT
+    family = MONOMIAL
+  [../]
+  [./sigma_yy]
+    order = CONSTANT
+    family = MONOMIAL
+  [../]
+  [./sigma_xy]
+    order = CONSTANT
+    family = MONOMIAL
+  [../]
+[]
+
+[Kernels]
+  active = 'TensorMechanics htcond Q_function'
+  [./htcond]
+    type = HeatConduction
+    variable = T
+  [../]
+  [./TensorMechanics]
+    displacements = 'disp_x disp_y'
+  [../]
+  [./Q_function]
+    type = BodyForce
+    variable = T
+    value = 1
+    function = 50.0*exp(-t)*sin(3.14159*x)*sin(3.14159*y)
+  [../]
+[]
+
+[AuxKernels]
+  [./sigma_xx]
+    type = RankTwoAux
+    variable = sigma_xx
+    rank_two_tensor = stress
+    index_i = 0
+    index_j = 0
+  [../]
+  [./sigma_yy]
+    type = RankTwoAux
+    variable = sigma_yy
+    rank_two_tensor = stress
+    index_i = 1
+    index_j = 1
+  [../]
+  [./sigma_xy]
+    type = RankTwoAux
+    variable = sigma_xy
+    rank_two_tensor = stress
+    index_i = 0
+    index_j = 1
+  [../]
+[]
+
+[BCs]
+  [./temp_left]
+    type = DirichletBC
+    variable = T
+    boundary = left
+    value = 400
+  [../]
+  [./temp_right]
+    type = DirichletBC
+    variable = T
+    boundary = right
+    value = 300
+  [../]
+  [./fix_x]
+    type = DirichletBC
+    variable = disp_x
+    boundary = left
+    value = 0
+  [../]
+  [./fix_y]
+    type = DirichletBC
+    variable = disp_y
+    boundary = bottom
+    value = 0
+  [../]
+[]
+
+[Materials]
+  [./thcond]
+    type = GenericConstantMaterial
+    prop_names = 'thermal_conductivity'
+    prop_values = '1.0'
+  [../]
+  [./elastic]
+    type = ComputeElasticityTensor
+    fill_method = symmetric_isotropic
+    C_ijkl = '2.1e5 0.8e5'
+  [../]
+  [./strain]
+    type = ComputeSmallStrain
+    displacements = 'disp_x disp_y'
+    eigenstrain_names = eigenstrain
+  [../]
+  [./stress]
+    type = ComputeLinearElasticStress
+  [../]
+  [./thermal_strain]
+    type = ComputeThermalExpansionEigenstrain
+    thermal_expansion_coeff = 1e-5
+    temperature = T
+    stress_free_temperature = 300
+    eigenstrain_name = eigenstrain
+  [../]
+[]
+
+[Executioner]
+  type = Transient
+  scheme = bdf2
+  dt = 0.05
+  end_time = 0.5
+  solve_type = PJFNK
+  nl_max_its = 10
+  l_max_its = 30
+  nl_abs_tol = 1e-8
+  l_tol = 1e-4
+[]
+
+[Outputs]
+  exodus = true
+  csv = true
+[]
+)").arg(mesh_path);
+}
+
+QString MoosePanel::inject_mesh_block(const QString& input,
+                                      const QString& mesh_path) const {
+  QStringList lines = input.split('\n');
+  int start = -1;
+  int end = -1;
+  for (int i = 0; i < lines.size(); ++i) {
+    if (lines[i].trimmed() == "[Mesh]") {
+      start = i;
+      for (int j = i + 1; j < lines.size(); ++j) {
+        if (lines[j].trimmed() == "[]") {
+          end = j;
+          break;
+        }
+      }
+      break;
+    }
+  }
+  const QString block = QStringList({
+      "[Mesh]",
+      "  type = FileMesh",
+      QString("  file = %1").arg(mesh_path),
+      "[]",
+  }).join('\n');
+
+  if (start >= 0 && end >= start) {
+    lines.erase(lines.begin() + start, lines.begin() + end + 1);
+    lines.insert(start, block);
+    return lines.join('\n');
+  }
+
+  // Prepend if not found.
+  return block + "\n\n" + input;
+}
+
+QString MoosePanel::inject_bcs_block(const QString& input,
+                                     const QStringList& names,
+                                     bool force) const {
+  if (names.isEmpty()) {
+    return QString();
+  }
+
+  const QStringList sanitized = sanitize_names(names);
+  QStringList bcs_lines;
+  bcs_lines << "[BCs]";
+  for (int i = 0; i < names.size(); ++i) {
+    const QString name = names.at(i);
+    const QString safe = sanitized.at(i);
+    bcs_lines << QString("  [./%1]").arg(safe);
+    bcs_lines << "    type = DirichletBC";
+    bcs_lines << "    variable = u";
+    bcs_lines << QString("    boundary = %1").arg(name);
+    bcs_lines << "    value = 0";
+    bcs_lines << "  [../]";
+  }
+  bcs_lines << "[]";
+  const QString block = bcs_lines.join('\n');
+
+  QStringList lines = input.split('\n');
+  int start = -1;
+  int end = -1;
+  for (int i = 0; i < lines.size(); ++i) {
+    if (lines[i].trimmed() == "[BCs]") {
+      start = i;
+      for (int j = i + 1; j < lines.size(); ++j) {
+        if (lines[j].trimmed() == "[]") {
+          end = j;
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  if (start >= 0 && end >= start) {
+    if (!force) {
+      const QString existing =
+          lines.mid(start, end - start + 1).join("\n");
+      if (!existing.contains("boundary = left") &&
+          !existing.contains("boundary = right") &&
+          !existing.contains("boundary = boundary")) {
+        return QString();
+      }
+    }
+    lines.erase(lines.begin() + start, lines.begin() + end + 1);
+    lines.insert(start, block);
+    return lines.join('\n');
+  }
+
+  return input + "\n\n" + block;
+}
+
+QStringList MoosePanel::sanitize_names(const QStringList& names) const {
+  QStringList out;
+  for (const auto& n : names) {
+    QString s = n;
+    for (int i = 0; i < s.size(); ++i) {
+      const QChar c = s.at(i);
+      if (!c.isLetterOrNumber() && c != '_') {
+        s[i] = '_';
+      }
+    }
+    if (s.isEmpty()) {
+      s = "bc";
+    }
+    out << s;
+  }
+  return out;
+}
+
+void MoosePanel::load_settings() {
+  QSettings settings("gmp-ise", "gmp_ise");
+  const QStringList history =
+      settings.value("moose/exec_history").toStringList();
+  const QString last = settings.value("moose/exec_last").toString();
+  exec_path_->clear();
+  exec_path_->addItems(history);
+  if (!last.isEmpty()) {
+    exec_path_->setCurrentText(last);
+  } else if (!history.isEmpty()) {
+    exec_path_->setCurrentText(history.front());
+  }
+  input_path_->setText(
+      settings.value("moose/input_path", input_path_->text()).toString());
+  workdir_path_->setText(
+      settings.value("moose/workdir", workdir_path_->text()).toString());
+  mesh_path_->setText(
+      settings.value("moose/mesh_path", mesh_path_->text()).toString());
+  use_mpi_->setChecked(
+      settings.value("moose/use_mpi", use_mpi_->isChecked()).toBool());
+  mpi_ranks_->setValue(
+      settings.value("moose/mpi_ranks", mpi_ranks_->value()).toInt());
+  runner_kind_->setCurrentIndex(
+      settings.value("moose/runner_kind", runner_kind_->currentIndex()).toInt());
+  template_kind_->setCurrentIndex(
+      settings.value("moose/template_kind", template_kind_->currentIndex())
+          .toInt());
+  extra_args_->setText(
+      settings.value("moose/extra_args", extra_args_->text()).toString());
+
+  if (exec_path_->currentText().trimmed().isEmpty()) {
+    const QString detected = auto_detect_exec();
+    if (!detected.isEmpty()) {
+      update_exec_history(detected);
+    }
+  }
+}
+
+void MoosePanel::save_settings() const {
+  QSettings settings("gmp-ise", "gmp_ise");
+  settings.setValue("moose/exec_last", exec_path_->currentText());
+  settings.setValue("moose/input_path", input_path_->text());
+  settings.setValue("moose/workdir", workdir_path_->text());
+  settings.setValue("moose/mesh_path", mesh_path_->text());
+  settings.setValue("moose/use_mpi", use_mpi_->isChecked());
+  settings.setValue("moose/mpi_ranks", mpi_ranks_->value());
+  settings.setValue("moose/runner_kind", runner_kind_->currentIndex());
+  settings.setValue("moose/template_kind", template_kind_->currentIndex());
+  settings.setValue("moose/extra_args", extra_args_->text());
+  QStringList history;
+  for (int i = 0; i < exec_path_->count(); ++i) {
+    history << exec_path_->itemText(i);
+  }
+  settings.setValue("moose/exec_history", history);
+}
+
+void MoosePanel::update_exec_history(const QString& path) {
+  if (path.isEmpty()) {
+    return;
+  }
+  const int existing = exec_path_->findText(path);
+  if (existing >= 0) {
+    exec_path_->removeItem(existing);
+  }
+  exec_path_->insertItem(0, path);
+  exec_path_->setCurrentText(path);
+  save_settings();
+}
+
+QString MoosePanel::auto_detect_exec() const {
+  const QByteArray env = qgetenv("GMP_MOOSE_EXEC");
+  if (!env.isEmpty()) {
+    const QString path = QString::fromLocal8Bit(env);
+    if (is_executable_file(path)) {
+      return QDir(path).absolutePath();
+    }
+  }
+
+  QString found = QStandardPaths::findExecutable("moose_test-opt");
+  if (is_executable_file(found)) {
+    return found;
+  }
+  found = QStandardPaths::findExecutable("moose_test-dbg");
+  if (is_executable_file(found)) {
+    return found;
+  }
+
+  found = find_exec_in_parents("external/moose/test/moose_test-opt", 6);
+  if (is_executable_file(found)) {
+    return found;
+  }
+  found = find_exec_in_parents("external/moose/test/moose_test-dbg", 6);
+  if (is_executable_file(found)) {
+    return found;
+  }
+
+  return QString();
+}
+
+QString MoosePanel::find_exec_in_parents(const QString& relative,
+                                         int max_levels) const {
+  QDir dir(QDir::currentPath());
+  for (int i = 0; i <= max_levels; ++i) {
+    const QString candidate = dir.filePath(relative);
+    if (is_executable_file(candidate)) {
+      return candidate;
+    }
+    if (!dir.cdUp()) {
+      break;
+    }
+  }
+  return QString();
+}
+
+QStringList MoosePanel::read_boundary_groups_from_mesh(const QString& mesh_path) const {
+  QStringList names;
+#ifndef GMP_ENABLE_GMSH_GUI
+  return parse_msh_physical_groups(mesh_path);
+#else
+  try {
+    if (!gmsh::isInitialized()) {
+      gmsh::initialize();
+    }
+    gmsh::clear();
+    gmsh::open(mesh_path.toStdString());
+    std::vector<std::pair<int, int>> phys_groups;
+    gmsh::model::getPhysicalGroups(phys_groups);
+    for (const auto& p : phys_groups) {
+      if (p.first != 2) {
+        continue;
+      }
+      std::string name;
+      gmsh::model::getPhysicalName(p.first, p.second, name);
+      if (name.empty()) {
+        name = "boundary_" + std::to_string(p.second);
+      }
+      names << QString::fromStdString(name);
+    }
+  } catch (const std::exception& ex) {
+    Q_UNUSED(ex);
+    return parse_msh_physical_groups(mesh_path);
+  }
+  return names;
+#endif
+}
+
+QStringList MoosePanel::parse_msh_physical_groups(const QString& mesh_path) const {
+  QStringList names;
+  QFile file(mesh_path);
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    return names;
+  }
+
+  bool in_section = false;
+  while (!file.atEnd()) {
+    const QByteArray raw = file.readLine();
+    const QString line = QString::fromUtf8(raw).trimmed();
+    if (line == "$PhysicalNames") {
+      in_section = true;
+      // Next line is count; ignore.
+      file.readLine();
+      continue;
+    }
+    if (in_section) {
+      if (line == "$EndPhysicalNames") {
+        break;
+      }
+      // Format: <dim> <tag> "<name>"
+      const QRegularExpression re(
+          R"m(^\s*(\d+)\s+(\d+)\s+"(.*)"\s*$)m");
+      const QRegularExpressionMatch m = re.match(line);
+      if (m.hasMatch()) {
+        const int dim = m.captured(1).toInt();
+        const QString name = m.captured(3);
+        if (dim == 2 && !name.isEmpty()) {
+          names << name;
+        }
+      }
+    }
+  }
+
+  return names;
+}
+
+QString MoosePanel::find_latest_exodus(const QString& dir_path) const {
+  QDir dir(dir_path);
+  if (!dir.exists()) {
+    return QString();
+  }
+  const QFileInfoList files =
+      dir.entryInfoList(QStringList() << "*.e", QDir::Files, QDir::Time);
+  if (files.isEmpty()) {
+    return QString();
+  }
+  return files.first().absoluteFilePath();
+}
+
+QStringList MoosePanel::list_exodus_files(const QString& dir_path) const {
+  QStringList list;
+  QDir dir(dir_path);
+  if (!dir.exists()) {
+    return list;
+  }
+  const QFileInfoList files =
+      dir.entryInfoList(QStringList() << "*.e" << "*.e-s*",
+                        QDir::Files, QDir::Time);
+  for (const auto& f : files) {
+    list << f.absoluteFilePath();
+  }
+  return list;
+}
+
+QString MoosePanel::pick_latest_exodus(const QStringList& files) const {
+  QFileInfo newest;
+  for (const auto& path : files) {
+    const QFileInfo fi(path);
+    if (!fi.exists()) {
+      continue;
+    }
+    if (!newest.exists() || fi.lastModified() > newest.lastModified()) {
+      newest = fi;
+    }
+  }
+  return newest.exists() ? newest.absoluteFilePath() : QString();
+}
+
+QStringList MoosePanel::collect_exodus_files(const QStringList& dirs) const {
+  QSet<QString> seen;
+  QStringList files;
+  for (const auto& dir : dirs) {
+    const QStringList in_dir = list_exodus_files(dir);
+    for (const auto& path : in_dir) {
+      if (seen.contains(path)) {
+        continue;
+      }
+      seen.insert(path);
+      files << path;
+    }
+  }
+  std::sort(files.begin(), files.end(),
+            [](const QString& a, const QString& b) {
+              return QFileInfo(a).lastModified() > QFileInfo(b).lastModified();
+            });
+  return files;
+}
+
+}  // namespace gmp

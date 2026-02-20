@@ -1,0 +1,7 @@
+[submodule "external/gmsh"]
+	path = external/gmsh
+	url = https://gitlab.onelab.info/gmsh/gmsh.git
+[submodule "external/moose"]
+	path = external/moose
+	url = https://github.com/idaholab/moose
+	branch = next
