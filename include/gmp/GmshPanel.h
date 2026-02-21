@@ -18,6 +18,9 @@ class GmshPanel : public QWidget {
   explicit GmshPanel(QWidget* parent = nullptr);
   ~GmshPanel() override;
 
+ public slots:
+  void generate_mesh();
+
  signals:
   void mesh_written(const QString& path);
   void boundary_groups(const QStringList& names);

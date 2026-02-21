@@ -5,6 +5,8 @@
 #include <QWidget>
 #include <QString>
 #include <QStringList>
+#include <QVariantMap>
+#include <QMap>
 
 #include "gmp/Runner.h"
 #include "gmp/RunnerFactory.h"
@@ -27,10 +29,23 @@ class MoosePanel : public QWidget {
  signals:
   void exodus_ready(const QString& path);
   void exodus_history(const QStringList& paths);
+  void job_started(const QVariantMap& info);
+  void job_finished(const QVariantMap& info);
 
  public slots:
   void set_mesh_path(const QString& path);
   void set_boundary_groups(const QStringList& names);
+  void apply_model_blocks(const QString& functions,
+                          const QString& variables,
+                          const QString& materials,
+                          const QString& bcs,
+                          const QString& kernels,
+                          const QString& outputs,
+                          const QString& executioner);
+  void set_template_by_key(const QString& key, bool apply_now = true);
+  void run_job();
+  void check_input();
+  void stop_job();
 
  private slots:
   void on_pick_exec();
@@ -53,6 +68,7 @@ class MoosePanel : public QWidget {
   QString template_file_mesh(const QString& mesh_path) const;
   QString template_tm_generated_mesh() const;
   QString template_tm_file_mesh(const QString& mesh_path) const;
+  QString template_heat_generated_mesh() const;
   QString inject_mesh_block(const QString& input, const QString& mesh_path) const;
   QStringList read_boundary_groups_from_mesh(const QString& mesh_path) const;
   QStringList parse_msh_physical_groups(const QString& mesh_path) const;
@@ -64,6 +80,9 @@ class MoosePanel : public QWidget {
   QString pick_latest_exodus(const QStringList& files) const;
   QStringList collect_exodus_files(const QStringList& dirs) const;
   void run_task(bool check_only);
+  QString upsert_block(const QString& input,
+                       const QString& block_name,
+                       const QString& block_text) const;
   QString resolve_exodus_path(const QString& token) const;
   void maybe_emit_exodus(const QString& path);
   void load_settings();

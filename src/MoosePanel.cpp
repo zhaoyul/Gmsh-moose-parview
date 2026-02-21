@@ -163,6 +163,7 @@ MoosePanel::MoosePanel(QWidget* parent) : QWidget(parent) {
   template_kind_ = new QComboBox();
   template_kind_->addItem("GeneratedMesh (Transient Diffusion)", "generated");
   template_kind_->addItem("FileMesh (Transient Diffusion)", "filemesh");
+  template_kind_->addItem("GeneratedMesh (Nonlinear Heat)", "heat_generated");
   template_kind_->addItem("GeneratedMesh (Thermo-Mechanics)", "tm_generated");
   template_kind_->addItem("FileMesh (Thermo-Mechanics)", "tm_filemesh");
   auto* apply_template = new QPushButton("Apply Template");
@@ -261,6 +262,10 @@ void MoosePanel::on_run() {
   run_task(false);
 }
 
+void MoosePanel::run_job() {
+  on_run();
+}
+
 void MoosePanel::on_stop() {
   if (!runner_) {
     return;
@@ -268,8 +273,16 @@ void MoosePanel::on_stop() {
   runner_->stop();
 }
 
+void MoosePanel::stop_job() {
+  on_stop();
+}
+
 void MoosePanel::on_check_input() {
   run_task(true);
+}
+
+void MoosePanel::check_input() {
+  on_check_input();
 }
 
 void MoosePanel::append_log(const QString& text) {
@@ -346,12 +359,57 @@ void MoosePanel::set_boundary_groups(const QStringList& names) {
   save_settings();
 }
 
+void MoosePanel::apply_model_blocks(const QString& functions,
+                                    const QString& variables,
+                                    const QString& materials,
+                                    const QString& bcs,
+                                    const QString& kernels,
+                                    const QString& outputs,
+                                    const QString& executioner) {
+  QString input = input_editor_->toPlainText();
+  input = upsert_block(input, "Functions", functions);
+  input = upsert_block(input, "Variables", variables);
+  input = upsert_block(input, "Materials", materials);
+  input = upsert_block(input, "BCs", bcs);
+  input = upsert_block(input, "Kernels", kernels);
+  input = upsert_block(input, "Outputs", outputs);
+  input = upsert_block(input, "Executioner", executioner);
+  if (input != input_editor_->toPlainText()) {
+    input_editor_->setPlainText(input);
+    append_log("Input updated from Model Tree.");
+  }
+  save_settings();
+}
+
+void MoosePanel::set_template_by_key(const QString& key, bool apply_now) {
+  if (!template_kind_) {
+    return;
+  }
+  int idx = -1;
+  for (int i = 0; i < template_kind_->count(); ++i) {
+    if (template_kind_->itemData(i).toString() == key) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) {
+    append_log("Unknown template key: " + key);
+    return;
+  }
+  template_kind_->setCurrentIndex(idx);
+  if (apply_now) {
+    on_apply_template();
+  }
+}
+
 void MoosePanel::on_apply_template() {
   const QString key = template_kind_->currentData().toString();
   if (key == "filemesh") {
     const QString path =
         mesh_path_->text().isEmpty() ? "path/to/mesh.msh" : mesh_path_->text();
     input_editor_->setPlainText(template_file_mesh(path));
+  } else if (key == "heat_generated") {
+    input_editor_->setPlainText(template_heat_generated_mesh());
   } else if (key == "tm_filemesh") {
     const QString path =
         mesh_path_->text().isEmpty() ? "path/to/mesh.msh" : mesh_path_->text();
@@ -444,6 +502,17 @@ void MoosePanel::run_task(bool check_only) {
     return;
   }
 
+  QVariantMap start_info;
+  start_info.insert("exec", exec_path);
+  start_info.insert("input", input_path);
+  start_info.insert("workdir", spec.working_dir);
+  start_info.insert("use_mpi", use_mpi_->isChecked());
+  start_info.insert("mpi_ranks", mpi_ranks_->value());
+  start_info.insert("check_only", check_only);
+  start_info.insert("launcher", spec.program);
+  start_info.insert("args", spec.args.join(" "));
+  emit job_started(start_info);
+
   connect(runner_.get(), &Runner::std_out, this, &MoosePanel::handle_output);
   connect(runner_.get(), &Runner::std_err, this, &MoosePanel::handle_output);
   connect(runner_.get(), &Runner::started, this, [this, check_only]() {
@@ -478,12 +547,46 @@ void MoosePanel::run_task(bool check_only) {
             if (!exodus.isEmpty()) {
               maybe_emit_exodus(exodus);
             }
+
+            QVariantMap finish_info;
+            finish_info.insert("exit_code", code);
+            finish_info.insert("status",
+                               status == QProcess::NormalExit ? "Normal"
+                                                              : "Crash");
+            finish_info.insert("exodus", exodus);
+            finish_info.insert("history", history);
+            emit job_finished(finish_info);
           });
 
   append_log("Launching: " + spec.program + " " + spec.args.join(" "));
   runner_->start(spec);
   update_exec_history(exec_path);
   save_settings();
+}
+
+QString MoosePanel::upsert_block(const QString& input,
+                                 const QString& block_name,
+                                 const QString& block_text) const {
+  const QString trimmed = block_text.trimmed();
+  if (trimmed.isEmpty()) {
+    return input;
+  }
+  const QString pattern =
+      QString(R"((?s)\[%1\].*?(?=\n\[|\z))")
+          .arg(QRegularExpression::escape(block_name));
+  QRegularExpression re(pattern);
+  QString out = input;
+  if (re.match(out).hasMatch()) {
+    out.replace(re, trimmed);
+  } else {
+    out = out.trimmed();
+    if (!out.isEmpty()) {
+      out += "\n\n";
+    }
+    out += trimmed;
+    out += "\n";
+  }
+  return out;
 }
 
 QString MoosePanel::resolve_exodus_path(const QString& token) const {
@@ -655,6 +758,74 @@ QString MoosePanel::template_generated_mesh() const {
   scheme = 'bdf2'
   dt = 0.01
   end_time = 0.2
+[]
+
+[Outputs]
+  exodus = true
+  csv = true
+[]
+)";
+}
+
+QString MoosePanel::template_heat_generated_mesh() const {
+  return R"([Mesh]
+  type = GeneratedMesh
+  dim = 2
+  nx = 30
+  ny = 30
+  xmin = 0
+  xmax = 1
+  ymin = 0
+  ymax = 1
+[]
+
+[Variables]
+  [./T]
+    initial_condition = 300
+  [../]
+[]
+
+[Kernels]
+  [./T_dt]
+    type = TimeDerivative
+    variable = T
+  [../]
+  [./T_cond]
+    type = HeatConduction
+    variable = T
+  [../]
+[]
+
+[Materials]
+  [./k_T]
+    type = ParsedMaterial
+    property_name = thermal_conductivity
+    coupled_variables = T
+    expression = '1 + 0.01*T'
+  [../]
+[]
+
+[BCs]
+  [./temp_left]
+    type = DirichletBC
+    variable = T
+    boundary = left
+    value = 500
+  [../]
+  [./temp_right]
+    type = DirichletBC
+    variable = T
+    boundary = right
+    value = 300
+  [../]
+[]
+
+[Executioner]
+  type = Transient
+  solve_type = NEWTON
+  scheme = 'bdf2'
+  dt = 0.02
+  end_time = 0.5
 []
 
 [Outputs]

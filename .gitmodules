@@ -5,3 +5,6 @@
 	path = external/moose
 	url = https://github.com/idaholab/moose
 	branch = next
+[submodule "external/yaml-cpp"]
+	path = external/yaml-cpp
+	url = https://github.com/jbeder/yaml-cpp

@@ -112,6 +112,10 @@ GmshPanel::~GmshPanel() {
 #endif
 }
 
+void GmshPanel::generate_mesh() {
+  on_generate();
+}
+
 void GmshPanel::on_pick_output() {
   const QString path =
       QFileDialog::getSaveFileName(this, "Select mesh output", output_path_->text(),

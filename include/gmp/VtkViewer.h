@@ -40,6 +40,7 @@ class VtkViewer : public QWidget {
  public slots:
   void set_exodus_file(const QString& path);
   void set_exodus_history(const QStringList& paths);
+  bool save_screenshot(const QString& path);
 
  private slots:
   void on_time_changed(int index);

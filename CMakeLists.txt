@@ -40,6 +40,7 @@ add_executable(gmp_ise
   src/GmshPanel.cpp
   src/MoosePanel.cpp
   src/VtkViewer.cpp
+  src/PropertyEditor.cpp
   src/LocalRunner.cpp
   src/ProcessRunner.cpp
   src/RemoteRunner.cpp
@@ -51,10 +52,14 @@ add_executable(gmp_ise
   include/gmp/GmshPanel.h
   include/gmp/MoosePanel.h
   include/gmp/VtkViewer.h
+  include/gmp/PropertyEditor.h
 )
 
 target_include_directories(gmp_ise PRIVATE include)
 target_link_libraries(gmp_ise PRIVATE Qt6::Widgets)
+
+add_subdirectory(external/yaml-cpp)
+target_link_libraries(gmp_ise PRIVATE yaml-cpp)
 
 if(GMP_ENABLE_GMSH_GUI)
   target_compile_definitions(gmp_ise PRIVATE GMP_ENABLE_GMSH_GUI)

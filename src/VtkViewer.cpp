@@ -31,6 +31,8 @@
 #include <vtkPolyDataMapper.h>
 #include <vtkRenderer.h>
 #include <vtkScalarBarActor.h>
+#include <vtkWindowToImageFilter.h>
+#include <vtkPNGWriter.h>
 #include <vtkStreamingDemandDrivenPipeline.h>
 #endif
 
@@ -239,6 +241,27 @@ void VtkViewer::set_exodus_history(const QStringList& paths) {
   if (!paths.isEmpty()) {
     output_combo_->setCurrentIndex(0);
   }
+}
+
+bool VtkViewer::save_screenshot(const QString& path) {
+  if (path.isEmpty()) {
+    return false;
+  }
+#ifdef GMP_ENABLE_VTK_VIEWER
+  if (render_window_) {
+    auto w2i = vtkSmartPointer<vtkWindowToImageFilter>::New();
+    w2i->SetInput(render_window_);
+    w2i->ReadFrontBufferOff();
+    w2i->Update();
+    auto writer = vtkSmartPointer<vtkPNGWriter>::New();
+    writer->SetFileName(path.toUtf8().constData());
+    writer->SetInputConnection(w2i->GetOutputPort());
+    writer->Write();
+    return QFileInfo::exists(path);
+  }
+#endif
+  const QPixmap pix = grab();
+  return pix.save(path);
 }
 
 void VtkViewer::on_reload() {

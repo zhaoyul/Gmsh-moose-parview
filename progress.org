@@ -1,0 +1,80 @@
+* Abaqus-Like UI Refactor Plan
+** Status
+   - Overall: In Progress
+   - Last Update: 2026-02-20
+
+** Goals
+   - Provide an Abaqus-like user experience for model setup, solve, and post-processing.
+   - Make the app look and feel like a professional simulation suite.
+   - Keep the workflow end-to-end: geometry -> mesh -> solve -> results.
+
+** Plan
+*** DONE 1. 信息架构与流程定义
+    - Abaqus-style Model Tree:
+      Parts / Materials / Sections / Steps / BC / Loads / Interactions / Mesh / Jobs / Results
+    - Shortest demo workflow:
+      Part -> Material -> Section -> Assembly -> Step -> BC/Load -> Mesh -> Job -> Results
+    - UI wireframe + view list:
+      +---------------------------------------------------------------+
+      | Menu/Toolbar                                                  |
+      +---------------------------------------------------------------+
+      | Modules: Part | Property | Assembly | Step | Interaction |    |
+      |          Load | Mesh | Job | Visualization                    |
+      +--------------------+----------------------+-------------------+
+      | Model Tree         |   Viewport (VTK)     | Property Editor   |
+      | Parts              |   + 2D/Plot/Table    | Context-sensitive |
+      | Materials          |                      | forms             |
+      | Sections           |                      |                   |
+      | Steps              |                      |                   |
+      | BC / Loads         |                      |                   |
+      | Interactions       |                      |                   |
+      | Mesh               |                      |                   |
+      | Jobs               |                      |                   |
+      | Results            |                      |                   |
+      +--------------------+----------------------+-------------------+
+      | Job/Message Console (run log, warnings, progress)             |
+      +---------------------------------------------------------------+
+
+*** DONE 2. Qt 界面框架搭建
+    - Top module tabs: Part / Property / Assembly / Step / Interaction / Load / Mesh / Job / Visualization
+    - Left: Model Tree
+    - Right: Property Editor
+    - Center: Multi-view (VTK + 2D/Plot/Table)
+    - Bottom: Job/Message console
+
+*** DONE 3. 数据模型与项目结构
+    - Project file format (JSON/YAML)
+    - CRUD for model tree nodes
+    - Property panel binding
+    - Import/export project
+
+*** DONE 4. 仿真流程打通
+    - [X] Gmsh: geometry/mesh import or generate
+    - [X] MOOSE: parameterized templates and input generation
+    - [X] Jobs: unified run management + logs
+    - [X] Results: auto load .e + scalar/component selection + time steps
+    - [X] Model Tree: mesh/job/result 节点自动同步
+    - [X] Model Tree -> MOOSE 输入块联动 (BC/Load/Material/Step)
+    - [X] Model Tree -> MOOSE 输入块联动 (Functions/Variables/Outputs)
+
+*** TODO 5. 视觉与交互拟真
+    - [X] Toolbar + status bar
+    - [X] Model Tree icons + context menu
+    - [X] Base theme (colors, borders)
+    - [X] Shortcuts + status notifications
+    - [X] Refined spacing and typography
+    - [X] Consistent button sizing
+    - [X] Dark-on-gray icon set
+
+*** TODO 6. 展示与案例
+    - [X] 2 representative cases wired to Model Tree + MOOSE sync
+    - [X] One-click run demo (Menu: Demos -> Run ...)
+    - [X] Add third case (nonlinear heat)
+    - [X] Screenshots (Save Screenshot...)
+    - [ ] Recording
+
+** Progress Update (2026-02-20)
+   - UI: Added toolbar, status bar, shortcuts, and base theme.
+   - Model Tree: CRUD + YAML save/load + auto sync to MOOSE blocks.
+   - Workflow: Mesh/Job/Result nodes auto-populated; results auto-loaded.
+   - Remaining: refine typography/spacing; expand MOOSE mapping; add demo cases.
