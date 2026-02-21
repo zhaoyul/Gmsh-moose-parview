@@ -592,6 +592,17 @@ QDoubleSpinBox {
   background: #fbfbfb;
   border: 1px solid #b5b5b5;
 }
+QComboBox QAbstractItemView {
+  background: #fbfbfb;
+  border: 1px solid #b5b5b5;
+  selection-background-color: #cfe1ff;
+  selection-color: #111;
+  outline: 0;
+}
+QComboBox QAbstractItemView::item:hover {
+  background: #cfe1ff;
+  color: #111;
+}
 QTreeView::item { padding: 4px 6px; }
 QTreeView::item:selected { background: #cfe1ff; color: #111; }
 QTableWidget::item { padding: 2px 4px; }

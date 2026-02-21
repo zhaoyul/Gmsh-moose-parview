@@ -3,11 +3,13 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListView>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QSlider>
@@ -220,6 +222,44 @@ vtkSmartPointer<vtkUnstructuredGrid> BuildGridFromGmsh(
 }
 #endif
 
+class ComboPopupFixer : public QObject {
+ public:
+  explicit ComboPopupFixer(QComboBox* combo) : QObject(combo), combo_(combo) {}
+
+ protected:
+  bool eventFilter(QObject* obj, QEvent* event) override {
+    if (!combo_) {
+      return QObject::eventFilter(obj, event);
+    }
+    if (event->type() == QEvent::Show || event->type() == QEvent::ShowToParent) {
+      auto* w = qobject_cast<QWidget*>(obj);
+      if (w) {
+        const QPoint pos = combo_->mapToGlobal(QPoint(0, combo_->height()));
+        w->move(pos);
+      }
+    }
+    return QObject::eventFilter(obj, event);
+  }
+
+ private:
+  QComboBox* combo_ = nullptr;
+};
+
+void AttachComboPopupFix(QComboBox* combo) {
+  if (!combo) {
+    return;
+  }
+  auto* view = new QListView(combo);
+  view->setUniformItemSizes(true);
+  combo->setView(view);
+  auto* popup = combo->view()->window();
+  if (popup) {
+    popup->installEventFilter(new ComboPopupFixer(combo));
+  } else {
+    combo->view()->installEventFilter(new ComboPopupFixer(combo));
+  }
+}
+
 }  // namespace
 #endif
 
@@ -241,6 +281,7 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
   output_label_ = new QLabel("Outputs");
   output_combo_ = new QComboBox();
   output_combo_->setMinimumWidth(240);
+  AttachComboPopupFix(output_combo_);
   output_pick_ = new QPushButton("Load Selected");
   connect(output_pick_, &QPushButton::clicked, this, [this]() {
     const QString path = output_combo_->currentData().toString();
@@ -256,18 +297,21 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
   auto* scalar_row = new QHBoxLayout();
   array_combo_ = new QComboBox();
   array_combo_->setMinimumWidth(220);
+  AttachComboPopupFix(array_combo_);
   connect(array_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &VtkViewer::on_array_changed);
   preset_combo_ = new QComboBox();
   preset_combo_->addItem("Blue-Red");
   preset_combo_->addItem("Grayscale");
   preset_combo_->addItem("Rainbow");
+  AttachComboPopupFix(preset_combo_);
   connect(preset_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &VtkViewer::on_preset_changed);
   repr_combo_ = new QComboBox();
   repr_combo_->addItem("Surface");
   repr_combo_->addItem("Wireframe");
   repr_combo_->addItem("Surface + Edges");
+  AttachComboPopupFix(repr_combo_);
   connect(repr_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &VtkViewer::on_repr_changed);
 
@@ -318,10 +362,12 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
   mesh_dim_->addItem("1", 1);
   mesh_dim_->addItem("2", 2);
   mesh_dim_->addItem("3", 3);
+  AttachComboPopupFix(mesh_dim_);
   connect(mesh_dim_, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, [this](int) { update_mesh_pipeline(); });
   mesh_group_ = new QComboBox();
   mesh_group_->setMinimumWidth(180);
+  AttachComboPopupFix(mesh_group_);
   connect(mesh_group_, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, [this](int) { update_mesh_pipeline(); });
   mesh_row->addWidget(show_nodes_);
@@ -337,6 +383,7 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
   slice_enable_ = new QCheckBox("Slice");
   slice_axis_ = new QComboBox();
   slice_axis_->addItems({"X", "Y", "Z"});
+  AttachComboPopupFix(slice_axis_);
   slice_slider_ = new QSlider(Qt::Horizontal);
   slice_slider_->setRange(0, 100);
   slice_slider_->setValue(50);
