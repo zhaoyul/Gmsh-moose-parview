@@ -72,6 +72,7 @@ class MainWindow : public QMainWindow {
   QAction* action_sync_ = nullptr;
   QAction* action_screenshot_ = nullptr;
   QAction* action_mesh_ = nullptr;
+  QAction* action_preview_mesh_ = nullptr;
   QAction* action_run_ = nullptr;
   QAction* action_check_ = nullptr;
   QAction* action_stop_ = nullptr;

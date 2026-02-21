@@ -56,6 +56,7 @@
     - [X] Model Tree: mesh/job/result 节点自动同步
     - [X] Model Tree -> MOOSE 输入块联动 (BC/Load/Material/Step)
     - [X] Model Tree -> MOOSE 输入块联动 (Functions/Variables/Outputs)
+    - [X] Mesh preview in VTK (direct .msh)
 
 *** TODO 5. 视觉与交互拟真
     - [X] Toolbar + status bar

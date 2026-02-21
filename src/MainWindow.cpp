@@ -298,6 +298,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
           &MoosePanel::set_mesh_path);
   connect(mesh_page, &GmshPanel::boundary_groups, job_page,
           &MoosePanel::set_boundary_groups);
+  connect(mesh_page, &GmshPanel::mesh_written, viewer_,
+          &VtkViewer::set_mesh_file);
   connect(mesh_page, &GmshPanel::mesh_written, this,
           [this](const QString& path) {
             upsert_mesh_item(path);
@@ -371,7 +373,9 @@ void MainWindow::build_menu() {
 
   auto* mesh_menu = menuBar()->addMenu("&Mesh");
   action_mesh_ = mesh_menu->addAction("Generate Mesh");
+  action_preview_mesh_ = mesh_menu->addAction("Preview Mesh...");
   action_mesh_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
+  action_preview_mesh_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M));
 
   auto* job_menu = menuBar()->addMenu("&Job");
   action_run_ = job_menu->addAction("Run");
@@ -462,6 +466,17 @@ void MainWindow::build_menu() {
     }
     statusBar()->showMessage("Mesh panel not ready.", 2000);
   });
+  connect(action_preview_mesh_, &QAction::triggered, this, [this]() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, "Open Gmsh Mesh", QDir::homePath(), "Gmsh Mesh (*.msh)");
+    if (path.isEmpty()) {
+      return;
+    }
+    if (viewer_) {
+      viewer_->set_mesh_file(path);
+      statusBar()->showMessage("Mesh loaded.", 2000);
+    }
+  });
   connect(action_run_, &QAction::triggered, this, [this]() {
     if (moose_panel_) {
       moose_panel_->run_job();
@@ -526,6 +541,10 @@ void MainWindow::build_toolbar() {
   if (action_mesh_) {
     action_mesh_->setIcon(MakeIcon(IconGlyph::Mesh));
     toolbar->addAction(action_mesh_);
+  }
+  if (action_preview_mesh_) {
+    action_preview_mesh_->setIcon(MakeIcon(IconGlyph::OpenFolder));
+    toolbar->addAction(action_preview_mesh_);
   }
   if (action_run_) {
     action_run_->setIcon(MakeIcon(IconGlyph::Run));

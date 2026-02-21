@@ -20,6 +20,12 @@ class vtkGenericOpenGLRenderWindow;
 class vtkRenderer;
 class vtkExodusIIReader;
 class vtkCompositeDataGeometryFilter;
+class vtkDataSetSurfaceFilter;
+class vtkUnstructuredGrid;
+class vtkVertexGlyphFilter;
+class vtkThreshold;
+class vtkPlane;
+class vtkCutter;
 class vtkPolyDataMapper;
 class vtkActor;
 class vtkScalarBarActor;
@@ -41,6 +47,7 @@ class VtkViewer : public QWidget {
   void set_exodus_file(const QString& path);
   void set_exodus_history(const QStringList& paths);
   bool save_screenshot(const QString& path);
+  void set_mesh_file(const QString& path);
 
  private slots:
   void on_time_changed(int index);
@@ -65,6 +72,10 @@ class VtkViewer : public QWidget {
   void set_refresh_enabled(bool enabled);
   void setup_watcher(const QString& file_path);
   void schedule_reload();
+  void load_file(const QString& path);
+  void update_nodes_visibility();
+  void update_mesh_pipeline();
+  void update_mesh_controls();
 
   QString current_file_;
   QLabel* file_label_ = nullptr;
@@ -74,6 +85,14 @@ class VtkViewer : public QWidget {
   QComboBox* repr_combo_ = nullptr;
   QCheckBox* auto_range_ = nullptr;
   QCheckBox* auto_refresh_ = nullptr;
+  QCheckBox* show_nodes_ = nullptr;
+  QCheckBox* show_quality_ = nullptr;
+  QLabel* mesh_legend_ = nullptr;
+  QComboBox* mesh_group_ = nullptr;
+  QComboBox* mesh_dim_ = nullptr;
+  QCheckBox* slice_enable_ = nullptr;
+  QComboBox* slice_axis_ = nullptr;
+  QSlider* slice_slider_ = nullptr;
   QSpinBox* refresh_ms_ = nullptr;
   QTimer* refresh_timer_ = nullptr;
   QTimer* debounce_timer_ = nullptr;
@@ -94,16 +113,38 @@ class VtkViewer : public QWidget {
   QVTKOpenGLNativeWidget* vtk_widget_ = nullptr;
   std::vector<double> time_steps_;
 
+  enum class DataMode { None, Exodus, Mesh };
+  DataMode mode_ = DataMode::None;
+
+  struct MeshGroup {
+    int dim = 0;
+    int id = 0;
+    QString name;
+  };
+  std::vector<MeshGroup> mesh_groups_;
+
   vtkSmartPointer<vtkGenericOpenGLRenderWindow> render_window_;
   vtkSmartPointer<vtkRenderer> renderer_;
   vtkSmartPointer<vtkExodusIIReader> reader_;
   vtkSmartPointer<vtkCompositeDataGeometryFilter> geom_;
+  vtkSmartPointer<vtkUnstructuredGrid> mesh_grid_;
+  vtkSmartPointer<vtkDataSetSurfaceFilter> mesh_geom_;
+  vtkSmartPointer<vtkThreshold> mesh_dim_threshold_;
+  vtkSmartPointer<vtkThreshold> mesh_group_threshold_;
+  vtkSmartPointer<vtkPlane> mesh_slice_plane_;
+  vtkSmartPointer<vtkCutter> mesh_slice_cutter_;
   vtkSmartPointer<vtkPolyDataMapper> mapper_;
   vtkSmartPointer<vtkActor> actor_;
+  vtkSmartPointer<vtkVertexGlyphFilter> nodes_filter_;
+  vtkSmartPointer<vtkPolyDataMapper> nodes_mapper_;
+  vtkSmartPointer<vtkActor> nodes_actor_;
   vtkSmartPointer<vtkScalarBarActor> scalar_bar_;
   vtkSmartPointer<vtkLookupTable> lut_;
   bool first_render_ = true;
   bool pipeline_ready_ = false;
+  bool actor_added_ = false;
+  bool mesh_quality_ready_ = false;
+  double mesh_bounds_[6] = {0, 0, 0, 0, 0, 0};
 #endif
 };
 
