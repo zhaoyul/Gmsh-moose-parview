@@ -125,6 +125,9 @@
     - [X] Mesh viewer group filter (sync from Gmsh panel).
     - [X] Mesh viewer element-type filter + opacity/shrink.
     - [X] Mesh pick inspector (cell/group/type/quality).
+    - [X] Mesh pick highlight (group/cell) with overlay.
+    - [X] View controls (axes/outline/camera presets).
+    - [X] Entity-level picking + filter, and pick-to-entity fill.
 
 *** TODO 7. Import/Export Round-Trip
     - [X] Save mesh (.msh).
@@ -153,3 +156,7 @@
    - Project: Gmsh settings persist in project YAML.
    - Gmsh: Element order + high-order optimization controls.
    - Viewer: Added element type filter, shrink/opacity controls, and pick inspector.
+   - BC sync: boundary groups now follow dim-1 for 3D/2D/1D meshes.
+   - Viewer: Added pick highlight overlay and view controls (axes/outline/presets).
+   - Viewer: Added entity pick/filter and view-to-Gmsh entity fill.
+   - Project: Persisted MOOSE and Viewer settings into YAML for troubleshooting.

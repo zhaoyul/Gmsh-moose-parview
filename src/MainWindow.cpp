@@ -24,6 +24,7 @@
 #include <QPainterPath>
 #include <QVariantMap>
 #include <QMetaType>
+#include <QSet>
 
 #include <fstream>
 #include <QFileInfo>
@@ -304,6 +305,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
           &VtkViewer::set_mesh_file);
   connect(mesh_page, &GmshPanel::physical_group_selected, viewer_,
           &VtkViewer::set_mesh_group_filter);
+  connect(viewer_, &VtkViewer::mesh_group_picked, mesh_page,
+          &GmshPanel::select_physical_group);
+  connect(viewer_, &VtkViewer::mesh_entity_picked, mesh_page,
+          &GmshPanel::apply_entity_pick);
   connect(mesh_page, &GmshPanel::mesh_written, this,
           [this](const QString& path) {
             upsert_mesh_item(path);
@@ -1260,6 +1265,45 @@ void MainWindow::remove_item(QTreeWidgetItem* item) {
 void MainWindow::load_project(const QString& path) {
   try {
     YAML::Node root = YAML::LoadFile(path.toStdString());
+    auto parse_map = [](const YAML::Node& node,
+                        const QSet<QString>& force_string) {
+      QVariantMap map;
+      if (!node || !node.IsMap()) {
+        return map;
+      }
+      for (const auto& it : node) {
+        const QString key = QString::fromStdString(it.first.as<std::string>());
+        const YAML::Node value = it.second;
+        if (!value.IsScalar()) {
+          continue;
+        }
+        const QString raw = QString::fromStdString(value.as<std::string>());
+        if (force_string.contains(key)) {
+          map.insert(key, raw);
+          continue;
+        }
+        const QString lower = raw.toLower();
+        if (lower == "true" || lower == "false") {
+          map.insert(key, lower == "true");
+          continue;
+        }
+        bool ok_int = false;
+        const int int_val = raw.toInt(&ok_int);
+        if (ok_int && !raw.contains('.')
+            && !raw.contains('e', Qt::CaseInsensitive)) {
+          map.insert(key, int_val);
+          continue;
+        }
+        bool ok_double = false;
+        const double dbl_val = raw.toDouble(&ok_double);
+        if (ok_double) {
+          map.insert(key, dbl_val);
+          continue;
+        }
+        map.insert(key, raw);
+      }
+      return map;
+    };
     YAML::Node model = root["model"];
     if (!model || !model.IsMap()) {
       QMessageBox::warning(this, "Project Load",
@@ -1304,35 +1348,25 @@ void MainWindow::load_project(const QString& path) {
     console_->appendPlainText("Project loaded: " + path);
     YAML::Node gmsh_node = root["gmsh"];
     if (gmsh_node && gmsh_node.IsMap() && gmsh_panel_) {
-      QVariantMap gmsh_settings;
-      for (const auto& it : gmsh_node) {
-        const QString key = QString::fromStdString(it.first.as<std::string>());
-        const YAML::Node value = it.second;
-        if (!value.IsScalar()) {
-          continue;
-        }
-        const QString raw = QString::fromStdString(value.as<std::string>());
-        const QString lower = raw.toLower();
-        if (lower == "true" || lower == "false") {
-          gmsh_settings.insert(key, lower == "true");
-          continue;
-        }
-        bool ok_int = false;
-        int int_val = raw.toInt(&ok_int);
-        if (ok_int && !raw.contains('.')
-            && !raw.contains('e', Qt::CaseInsensitive)) {
-          gmsh_settings.insert(key, int_val);
-          continue;
-        }
-        bool ok_double = false;
-        double dbl_val = raw.toDouble(&ok_double);
-        if (ok_double) {
-          gmsh_settings.insert(key, dbl_val);
-          continue;
-        }
-        gmsh_settings.insert(key, raw);
-      }
+      const QVariantMap gmsh_settings = parse_map(gmsh_node, {});
       gmsh_panel_->apply_gmsh_settings(gmsh_settings);
+    }
+
+    YAML::Node moose_node = root["moose"];
+    if (moose_node && moose_node.IsMap() && moose_panel_) {
+      const QSet<QString> force_string = {"exec_path", "input_path", "workdir",
+                                          "mesh_path", "template_key",
+                                          "extra_args", "input_text"};
+      const QVariantMap moose_settings = parse_map(moose_node, force_string);
+      moose_panel_->apply_moose_settings(moose_settings);
+    }
+
+    YAML::Node viewer_node = root["viewer"];
+    if (viewer_node && viewer_node.IsMap() && viewer_) {
+      const QSet<QString> force_string = {"current_file", "array_key", "preset",
+                                          "output_selected"};
+      const QVariantMap viewer_settings = parse_map(viewer_node, force_string);
+      viewer_->apply_viewer_settings(viewer_settings);
     }
   } catch (const std::exception& e) {
     QMessageBox::warning(this, "Project Load",
@@ -1344,6 +1378,8 @@ bool MainWindow::save_project(const QString& path) {
   try {
     YAML::Node root;
     root["version"] = 1;
+    root["saved_at"] =
+        QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString();
     YAML::Node model(YAML::NodeType::Map);
     for (int i = 0; i < model_tree_->topLevelItemCount(); ++i) {
       auto* root_item = model_tree_->topLevelItem(i);
@@ -1393,6 +1429,52 @@ bool MainWindow::save_project(const QString& path) {
         }
       }
       root["gmsh"] = gmsh_node;
+    }
+
+    if (moose_panel_) {
+      YAML::Node moose_node(YAML::NodeType::Map);
+      const QVariantMap settings = moose_panel_->moose_settings();
+      for (auto it = settings.begin(); it != settings.end(); ++it) {
+        const QVariant& val = it.value();
+        switch (val.typeId()) {
+          case QMetaType::Bool:
+            moose_node[it.key().toStdString()] = val.toBool();
+            break;
+          case QMetaType::Int:
+            moose_node[it.key().toStdString()] = val.toInt();
+            break;
+          case QMetaType::Double:
+            moose_node[it.key().toStdString()] = val.toDouble();
+            break;
+          default:
+            moose_node[it.key().toStdString()] = val.toString().toStdString();
+            break;
+        }
+      }
+      root["moose"] = moose_node;
+    }
+
+    if (viewer_) {
+      YAML::Node viewer_node(YAML::NodeType::Map);
+      const QVariantMap settings = viewer_->viewer_settings();
+      for (auto it = settings.begin(); it != settings.end(); ++it) {
+        const QVariant& val = it.value();
+        switch (val.typeId()) {
+          case QMetaType::Bool:
+            viewer_node[it.key().toStdString()] = val.toBool();
+            break;
+          case QMetaType::Int:
+            viewer_node[it.key().toStdString()] = val.toInt();
+            break;
+          case QMetaType::Double:
+            viewer_node[it.key().toStdString()] = val.toDouble();
+            break;
+          default:
+            viewer_node[it.key().toStdString()] = val.toString().toStdString();
+            break;
+        }
+      }
+      root["viewer"] = viewer_node;
     }
     std::ofstream out(path.toStdString());
     out << root;

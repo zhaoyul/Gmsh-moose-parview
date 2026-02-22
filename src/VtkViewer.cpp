@@ -32,9 +32,12 @@
 #include <vtkDataSetMapper.h>
 #include <vtkExodusIIReader.h>
 #include <vtkGenericOpenGLRenderWindow.h>
+#include <vtkCamera.h>
 #include <vtkInformation.h>
 #include <vtkLookupTable.h>
 #include <vtkMeshQuality.h>
+#include <vtkOutlineFilter.h>
+#include <vtkAxesActor.h>
 #include <vtkPlane.h>
 #include <vtkCutter.h>
 #include <vtkShrinkFilter.h>
@@ -161,6 +164,8 @@ vtkSmartPointer<vtkUnstructuredGrid> BuildGridFromGmsh(
 
     std::unordered_map<std::size_t, int> elem_phys;
     std::unordered_map<std::size_t, int> elem_phys_dim;
+    std::unordered_map<std::size_t, int> elem_ent_tag;
+    std::unordered_map<std::size_t, int> elem_ent_dim;
     std::vector<std::pair<int, int>> phys_groups;
     gmsh::model::getPhysicalGroups(phys_groups);
     for (const auto& pg : phys_groups) {
@@ -180,6 +185,21 @@ vtkSmartPointer<vtkUnstructuredGrid> BuildGridFromGmsh(
       }
     }
 
+    std::vector<std::pair<int, int>> entities;
+    gmsh::model::getEntities(entities);
+    for (const auto& ent : entities) {
+      std::vector<int> etypes;
+      std::vector<std::vector<std::size_t>> etags;
+      std::vector<std::vector<std::size_t>> enodes;
+      gmsh::model::mesh::getElements(etypes, etags, enodes, ent.first, ent.second);
+      for (const auto& list : etags) {
+        for (const auto tag : list) {
+          elem_ent_tag[tag] = ent.second;
+          elem_ent_dim[tag] = ent.first;
+        }
+      }
+    }
+
     auto phys_id_arr = vtkSmartPointer<vtkIntArray>::New();
     phys_id_arr->SetName("phys_id");
     auto phys_dim_arr = vtkSmartPointer<vtkIntArray>::New();
@@ -188,6 +208,12 @@ vtkSmartPointer<vtkUnstructuredGrid> BuildGridFromGmsh(
     elem_type_arr->SetName("elem_type");
     auto elem_tag_arr = vtkSmartPointer<vtkIntArray>::New();
     elem_tag_arr->SetName("elem_tag");
+    auto cell_id_arr = vtkSmartPointer<vtkIntArray>::New();
+    cell_id_arr->SetName("cell_id");
+    auto ent_dim_arr = vtkSmartPointer<vtkIntArray>::New();
+    ent_dim_arr->SetName("entity_dim");
+    auto ent_tag_arr = vtkSmartPointer<vtkIntArray>::New();
+    ent_tag_arr->SetName("entity_tag");
 
     std::vector<int> element_types;
     std::vector<std::vector<std::size_t>> element_tags;
@@ -195,6 +221,7 @@ vtkSmartPointer<vtkUnstructuredGrid> BuildGridFromGmsh(
     gmsh::model::mesh::getElements(element_types, element_tags,
                                    element_node_tags);
 
+    int cell_index = 0;
     for (size_t k = 0; k < element_types.size(); ++k) {
       int dim = 0;
       int order = 0;
@@ -231,10 +258,18 @@ vtkSmartPointer<vtkUnstructuredGrid> BuildGridFromGmsh(
             phys_it == elem_phys.end() ? 0 : phys_it->second;
         const int phys_dim =
             phys_it == elem_phys.end() ? dim : elem_phys_dim[elem_tag];
+        const auto ent_it = elem_ent_tag.find(elem_tag);
+        const int ent_tag = ent_it == elem_ent_tag.end() ? 0 : ent_it->second;
+        const int ent_dim =
+            ent_it == elem_ent_tag.end() ? dim : elem_ent_dim[elem_tag];
         phys_id_arr->InsertNextValue(phys_id);
         phys_dim_arr->InsertNextValue(phys_dim);
         elem_type_arr->InsertNextValue(element_types[k]);
         elem_tag_arr->InsertNextValue(static_cast<int>(elem_tag));
+        cell_id_arr->InsertNextValue(cell_index);
+        ent_dim_arr->InsertNextValue(ent_dim);
+        ent_tag_arr->InsertNextValue(ent_tag);
+        ++cell_index;
       }
     }
 
@@ -242,6 +277,9 @@ vtkSmartPointer<vtkUnstructuredGrid> BuildGridFromGmsh(
     grid->GetCellData()->AddArray(phys_dim_arr);
     grid->GetCellData()->AddArray(elem_type_arr);
     grid->GetCellData()->AddArray(elem_tag_arr);
+    grid->GetCellData()->AddArray(cell_id_arr);
+    grid->GetCellData()->AddArray(ent_dim_arr);
+    grid->GetCellData()->AddArray(ent_tag_arr);
     grid->GetCellData()->SetScalars(phys_id_arr);
 
     return grid;
@@ -265,6 +303,18 @@ class ComboPopupFixer : public QObject {
       if (w) {
         const QPoint pos = combo_->mapToGlobal(QPoint(0, combo_->height()));
         w->move(pos);
+        int width = combo_->width();
+        if (auto* view = combo_->view()) {
+          const int hint = view->sizeHintForColumn(0);
+          if (hint > 0) {
+            width = std::max(width, hint + 40);
+          }
+          width = std::max(width, combo_->minimumWidth());
+          width = std::max(width, 120);
+          view->setMinimumWidth(width);
+          view->setFixedWidth(width);
+        }
+        w->resize(width, w->height());
       }
     }
     return QObject::eventFilter(obj, event);
@@ -423,6 +473,17 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
   mesh_row->addStretch(1);
   layout->addLayout(mesh_row);
 
+  auto* entity_row = new QHBoxLayout();
+  mesh_entity_ = new QComboBox();
+  mesh_entity_->setMinimumWidth(180);
+  AttachComboPopupFix(mesh_entity_);
+  connect(mesh_entity_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int) { update_mesh_pipeline(); });
+  entity_row->addWidget(new QLabel("Entity"));
+  entity_row->addWidget(mesh_entity_, 1);
+  entity_row->addStretch(1);
+  layout->addLayout(entity_row);
+
   auto* mesh_opts = new QHBoxLayout();
   mesh_type_ = new QComboBox();
   mesh_type_->setMinimumWidth(160);
@@ -452,6 +513,24 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
       pick_info_->setText(enabled ? "Pick: click to inspect"
                                   : "Pick: disabled");
     }
+    update_selection_pipeline();
+  });
+  pick_mode_ = new QComboBox();
+  pick_mode_->addItem("Group", 0);
+  pick_mode_->addItem("Entity", 1);
+  pick_mode_->addItem("Cell", 2);
+  AttachComboPopupFix(pick_mode_);
+  connect(pick_mode_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int) { update_selection_pipeline(); });
+  pick_clear_ = new QPushButton("Clear");
+  connect(pick_clear_, &QPushButton::clicked, this, [this]() {
+    selected_group_dim_ = -1;
+    selected_group_id_ = -1;
+    selected_cell_id_ = -1;
+    update_selection_pipeline();
+    if (pick_info_) {
+      pick_info_->setText("Pick: cleared");
+    }
   });
   mesh_opts->addWidget(new QLabel("Type"));
   mesh_opts->addWidget(mesh_type_, 1);
@@ -461,8 +540,74 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
   mesh_opts->addWidget(mesh_shrink_);
   mesh_opts->addWidget(mesh_scalar_bar_);
   mesh_opts->addWidget(pick_enable_);
+  mesh_opts->addWidget(pick_mode_);
+  mesh_opts->addWidget(pick_clear_);
   mesh_opts->addStretch(1);
   layout->addLayout(mesh_opts);
+
+  auto* view_row = new QHBoxLayout();
+  view_combo_ = new QComboBox();
+  view_combo_->addItem("Reset", 0);
+  view_combo_->addItem("Front", 1);
+  view_combo_->addItem("Right", 2);
+  view_combo_->addItem("Top", 3);
+  view_combo_->addItem("Iso", 4);
+  AttachComboPopupFix(view_combo_);
+  view_apply_ = new QPushButton("Apply View");
+  connect(view_apply_, &QPushButton::clicked, this, [this]() {
+    apply_view_preset(view_combo_ ? view_combo_->currentData().toInt() : 0);
+  });
+  show_axes_ = new QCheckBox("Axes");
+  show_axes_->setChecked(false);
+  connect(show_axes_, &QCheckBox::toggled, this,
+          [this](bool) { update_scene_extras(); });
+  show_outline_ = new QCheckBox("Outline");
+  show_outline_->setChecked(false);
+  connect(show_outline_, &QCheckBox::toggled, this,
+          [this](bool) { update_scene_extras(); });
+  auto* reset_filters = new QPushButton("Reset Filters");
+  connect(reset_filters, &QPushButton::clicked, this, [this]() {
+    if (mesh_dim_) {
+      const int idx = mesh_dim_->findData(-1);
+      if (idx >= 0) {
+        mesh_dim_->setCurrentIndex(idx);
+      }
+    }
+    if (mesh_group_) {
+      const int idx = mesh_group_->findData(-1);
+      if (idx >= 0) {
+        mesh_group_->setCurrentIndex(idx);
+      }
+    }
+    if (mesh_entity_) {
+      const int idx = mesh_entity_->findData(-1);
+      if (idx >= 0) {
+        mesh_entity_->setCurrentIndex(idx);
+      }
+    }
+    if (mesh_type_) {
+      const int idx = mesh_type_->findData(-1);
+      if (idx >= 0) {
+        mesh_type_->setCurrentIndex(idx);
+      }
+    }
+    if (slice_enable_) {
+      slice_enable_->setChecked(false);
+    }
+    selected_group_dim_ = -1;
+    selected_group_id_ = -1;
+    selected_entity_dim_ = -1;
+    selected_entity_tag_ = -1;
+    selected_cell_id_ = -1;
+    update_mesh_pipeline();
+  });
+  view_row->addWidget(view_combo_);
+  view_row->addWidget(view_apply_);
+  view_row->addWidget(show_axes_);
+  view_row->addWidget(show_outline_);
+  view_row->addWidget(reset_filters);
+  view_row->addStretch(1);
+  layout->addLayout(view_row);
 
   pick_info_ = new QLabel("Pick: disabled");
   layout->addWidget(pick_info_);
@@ -664,6 +809,7 @@ void VtkViewer::set_mesh_file(const QString& path) {
   mesh_quality_ready_ = false;
   mesh_groups_.clear();
   mesh_elem_types_.clear();
+  mesh_entities_.clear();
   mesh_grid_ = BuildGridFromGmsh(path);
   if (!mesh_grid_) {
     file_label_->setText("Failed to load mesh");
@@ -688,6 +834,13 @@ void VtkViewer::set_mesh_file(const QString& path) {
                         element_types.end());
     for (int t : element_types) {
       mesh_elem_types_.push_back(t);
+    }
+
+    std::vector<std::pair<int, int>> entities;
+    gmsh::model::getEntities(entities);
+    std::sort(entities.begin(), entities.end());
+    for (const auto& ent : entities) {
+      mesh_entities_.push_back({ent.first, ent.second});
     }
   } catch (...) {
     // Ignore physical group name errors.
@@ -731,6 +884,9 @@ void VtkViewer::set_mesh_group_filter(int dim, int tag) {
   if (!mesh_group_ || mesh_group_->count() == 0) {
     return;
   }
+  selected_group_dim_ = dim;
+  selected_group_id_ = tag;
+  selected_cell_id_ = -1;
   int target_index = 0;
   if (dim >= 0 && tag >= 0) {
     for (size_t i = 0; i < mesh_groups_.size(); ++i) {
@@ -748,10 +904,258 @@ void VtkViewer::set_mesh_group_filter(int dim, int tag) {
   mesh_group_->setCurrentIndex(target_index);
   mesh_group_->blockSignals(false);
   update_mesh_pipeline();
+  update_selection_pipeline();
 #else
   Q_UNUSED(dim);
   Q_UNUSED(tag);
 #endif
+}
+
+void VtkViewer::set_mesh_entity_filter(int dim, int tag) {
+#ifdef GMP_ENABLE_VTK_VIEWER
+  if (!mesh_entity_ || mesh_entity_->count() == 0) {
+    return;
+  }
+  selected_entity_dim_ = dim;
+  selected_entity_tag_ = tag;
+  selected_cell_id_ = -1;
+  int target_index = 0;
+  if (dim >= 0 && tag >= 0) {
+    for (size_t i = 0; i < mesh_entities_.size(); ++i) {
+      const auto& ent = mesh_entities_[i];
+      if (ent.dim == dim && ent.tag == tag) {
+        const int idx = mesh_entity_->findData(static_cast<int>(i));
+        if (idx >= 0) {
+          target_index = idx;
+        }
+        break;
+      }
+    }
+  }
+  mesh_entity_->blockSignals(true);
+  mesh_entity_->setCurrentIndex(target_index);
+  mesh_entity_->blockSignals(false);
+  update_mesh_pipeline();
+  update_selection_pipeline();
+#else
+  Q_UNUSED(dim);
+  Q_UNUSED(tag);
+#endif
+}
+
+QVariantMap VtkViewer::viewer_settings() const {
+  QVariantMap map;
+  map.insert("current_file", current_file_);
+  map.insert("array_key",
+             array_combo_ ? array_combo_->currentData().toString() : "");
+  map.insert("preset",
+             preset_combo_ ? preset_combo_->currentText() : "");
+  map.insert("repr", repr_combo_ ? repr_combo_->currentIndex() : 0);
+  map.insert("auto_range", auto_range_ && auto_range_->isChecked());
+  map.insert("range_min", range_min_ ? range_min_->value() : 0.0);
+  map.insert("range_max", range_max_ ? range_max_->value() : 1.0);
+  map.insert("auto_refresh", auto_refresh_ && auto_refresh_->isChecked());
+  map.insert("refresh_ms", refresh_ms_ ? refresh_ms_->value() : 1000);
+  map.insert("show_faces", show_faces_ && show_faces_->isChecked());
+  map.insert("show_edges", show_edges_ && show_edges_->isChecked());
+  map.insert("show_shell", show_shell_ && show_shell_->isChecked());
+  map.insert("show_nodes", show_nodes_ && show_nodes_->isChecked());
+  map.insert("show_quality", show_quality_ && show_quality_->isChecked());
+  map.insert("mesh_dim", mesh_dim_ ? mesh_dim_->currentData().toInt() : -1);
+  map.insert("mesh_type", mesh_type_ ? mesh_type_->currentData().toInt() : -1);
+  map.insert("mesh_opacity",
+             mesh_opacity_ ? mesh_opacity_->value() : 1.0);
+  map.insert("mesh_shrink", mesh_shrink_ ? mesh_shrink_->value() : 1.0);
+  map.insert("mesh_scalar_bar",
+             mesh_scalar_bar_ && mesh_scalar_bar_->isChecked());
+  map.insert("pick_enable", pick_enable_ && pick_enable_->isChecked());
+  map.insert("pick_mode", pick_mode_ ? pick_mode_->currentData().toInt() : 0);
+  map.insert("slice_enable", slice_enable_ && slice_enable_->isChecked());
+  map.insert("slice_axis", slice_axis_ ? slice_axis_->currentIndex() : 0);
+  map.insert("slice_value", slice_slider_ ? slice_slider_->value() : 50);
+  map.insert("show_axes", show_axes_ && show_axes_->isChecked());
+  map.insert("show_outline", show_outline_ && show_outline_->isChecked());
+  map.insert("view_preset", view_combo_ ? view_combo_->currentData().toInt() : 0);
+  map.insert("output_selected",
+             output_combo_ ? output_combo_->currentData().toString() : "");
+
+#ifdef GMP_ENABLE_VTK_VIEWER
+  if (mesh_group_) {
+    const int idx = mesh_group_->currentData().toInt();
+    if (idx >= 0 && idx < static_cast<int>(mesh_groups_.size())) {
+      const auto& g = mesh_groups_[idx];
+      map.insert("mesh_group_dim", g.dim);
+      map.insert("mesh_group_id", g.id);
+    }
+  }
+  if (mesh_entity_) {
+    const int idx = mesh_entity_->currentData().toInt();
+    if (idx >= 0 && idx < static_cast<int>(mesh_entities_.size())) {
+      const auto& e = mesh_entities_[idx];
+      map.insert("mesh_entity_dim", e.dim);
+      map.insert("mesh_entity_tag", e.tag);
+    }
+  }
+#endif
+
+  return map;
+}
+
+void VtkViewer::apply_viewer_settings(const QVariantMap& settings) {
+  const QString file = settings.value("current_file").toString();
+  if (!file.isEmpty()) {
+    load_file(file);
+  }
+  if (show_faces_) {
+    show_faces_->setChecked(
+        settings.value("show_faces", show_faces_->isChecked()).toBool());
+  }
+  if (show_edges_) {
+    show_edges_->setChecked(
+        settings.value("show_edges", show_edges_->isChecked()).toBool());
+  }
+  if (show_shell_) {
+    show_shell_->setChecked(
+        settings.value("show_shell", show_shell_->isChecked()).toBool());
+  }
+  if (show_nodes_) {
+    show_nodes_->setChecked(
+        settings.value("show_nodes", show_nodes_->isChecked()).toBool());
+  }
+  if (show_quality_) {
+    show_quality_->setChecked(
+        settings.value("show_quality", show_quality_->isChecked()).toBool());
+  }
+  if (mesh_dim_) {
+    const int dim_val = settings.value("mesh_dim", -1).toInt();
+    const int idx = mesh_dim_->findData(dim_val);
+    if (idx >= 0) {
+      mesh_dim_->setCurrentIndex(idx);
+    }
+  }
+  if (mesh_type_) {
+    const int type_val = settings.value("mesh_type", -1).toInt();
+    const int idx = mesh_type_->findData(type_val);
+    if (idx >= 0) {
+      mesh_type_->setCurrentIndex(idx);
+    }
+  }
+  if (mesh_opacity_) {
+    mesh_opacity_->setValue(
+        settings.value("mesh_opacity", mesh_opacity_->value()).toDouble());
+  }
+  if (mesh_shrink_) {
+    mesh_shrink_->setValue(
+        settings.value("mesh_shrink", mesh_shrink_->value()).toDouble());
+  }
+  if (mesh_scalar_bar_) {
+    mesh_scalar_bar_->setChecked(
+        settings.value("mesh_scalar_bar", mesh_scalar_bar_->isChecked()).toBool());
+  }
+  if (pick_enable_) {
+    pick_enable_->setChecked(
+        settings.value("pick_enable", pick_enable_->isChecked()).toBool());
+  }
+  if (pick_mode_) {
+    const int mode_val = settings.value("pick_mode", pick_mode_->currentData().toInt()).toInt();
+    const int idx = pick_mode_->findData(mode_val);
+    if (idx >= 0) {
+      pick_mode_->setCurrentIndex(idx);
+    }
+  }
+  if (slice_enable_) {
+    slice_enable_->setChecked(
+        settings.value("slice_enable", slice_enable_->isChecked()).toBool());
+  }
+  if (slice_axis_) {
+    slice_axis_->setCurrentIndex(
+        settings.value("slice_axis", slice_axis_->currentIndex()).toInt());
+  }
+  if (slice_slider_) {
+    slice_slider_->setValue(
+        settings.value("slice_value", slice_slider_->value()).toInt());
+  }
+  if (show_axes_) {
+    show_axes_->setChecked(
+        settings.value("show_axes", show_axes_->isChecked()).toBool());
+  }
+  if (show_outline_) {
+    show_outline_->setChecked(
+        settings.value("show_outline", show_outline_->isChecked()).toBool());
+  }
+  if (view_combo_) {
+    const int preset = settings.value("view_preset", view_combo_->currentData().toInt()).toInt();
+    const int idx = view_combo_->findData(preset);
+    if (idx >= 0) {
+      view_combo_->setCurrentIndex(idx);
+    }
+  }
+
+  if (auto_range_) {
+    auto_range_->setChecked(
+        settings.value("auto_range", auto_range_->isChecked()).toBool());
+  }
+  if (range_min_) {
+    range_min_->setValue(
+        settings.value("range_min", range_min_->value()).toDouble());
+  }
+  if (range_max_) {
+    range_max_->setValue(
+        settings.value("range_max", range_max_->value()).toDouble());
+  }
+  if (preset_combo_) {
+    const QString preset = settings.value("preset").toString();
+    if (!preset.isEmpty()) {
+      const int idx = preset_combo_->findText(preset);
+      if (idx >= 0) {
+        preset_combo_->setCurrentIndex(idx);
+      }
+    }
+  }
+  if (repr_combo_) {
+    repr_combo_->setCurrentIndex(
+        settings.value("repr", repr_combo_->currentIndex()).toInt());
+  }
+  if (array_combo_) {
+    const QString key = settings.value("array_key").toString();
+    if (!key.isEmpty()) {
+      const int idx = array_combo_->findData(key);
+      if (idx >= 0) {
+        array_combo_->setCurrentIndex(idx);
+      }
+    }
+  }
+  if (auto_refresh_) {
+    auto_refresh_->setChecked(
+        settings.value("auto_refresh", auto_refresh_->isChecked()).toBool());
+  }
+  if (refresh_ms_) {
+    refresh_ms_->setValue(
+        settings.value("refresh_ms", refresh_ms_->value()).toInt());
+  }
+  if (output_combo_) {
+    const QString output = settings.value("output_selected").toString();
+    if (!output.isEmpty()) {
+      const int idx = output_combo_->findData(output);
+      if (idx >= 0) {
+        output_combo_->setCurrentIndex(idx);
+      }
+    }
+  }
+
+  if (settings.contains("mesh_group_dim") && settings.contains("mesh_group_id")) {
+    set_mesh_group_filter(settings.value("mesh_group_dim").toInt(),
+                          settings.value("mesh_group_id").toInt());
+  }
+  if (settings.contains("mesh_entity_dim") &&
+      settings.contains("mesh_entity_tag")) {
+    set_mesh_entity_filter(settings.value("mesh_entity_dim").toInt(),
+                           settings.value("mesh_entity_tag").toInt());
+  }
+
+  apply_mesh_visuals();
+  update_mesh_pipeline();
+  update_scene_extras();
 }
 
 void VtkViewer::set_exodus_history(const QStringList& paths) {
@@ -949,6 +1353,7 @@ void VtkViewer::update_pipeline() {
     update_mesh_pipeline();
   }
   populate_arrays();
+  update_scene_extras();
   if (first_render_) {
     renderer_->ResetCamera();
     first_render_ = false;
@@ -1294,6 +1699,9 @@ void VtkViewer::update_mesh_controls() {
   if (mesh_group_) {
     mesh_group_->setEnabled(mesh_mode);
   }
+  if (mesh_entity_) {
+    mesh_entity_->setEnabled(mesh_mode);
+  }
   if (mesh_type_) {
     mesh_type_->setEnabled(mesh_mode);
   }
@@ -1309,8 +1717,26 @@ void VtkViewer::update_mesh_controls() {
   if (pick_enable_) {
     pick_enable_->setEnabled(mesh_mode);
   }
+  if (pick_mode_) {
+    pick_mode_->setEnabled(mesh_mode);
+  }
+  if (pick_clear_) {
+    pick_clear_->setEnabled(mesh_mode);
+  }
   if (pick_info_) {
     pick_info_->setVisible(mesh_mode);
+  }
+  if (view_combo_) {
+    view_combo_->setEnabled(mesh_mode || mode_ == DataMode::Exodus);
+  }
+  if (view_apply_) {
+    view_apply_->setEnabled(mesh_mode || mode_ == DataMode::Exodus);
+  }
+  if (show_axes_) {
+    show_axes_->setEnabled(mesh_mode || mode_ == DataMode::Exodus);
+  }
+  if (show_outline_) {
+    show_outline_->setEnabled(mesh_mode || mode_ == DataMode::Exodus);
   }
   if (slice_enable_) {
     slice_enable_->setEnabled(mesh_mode);
@@ -1349,6 +1775,24 @@ void VtkViewer::update_mesh_controls() {
     }
     mesh_group_->setCurrentIndex(0);
     mesh_group_->blockSignals(false);
+  }
+
+  if (mesh_entity_) {
+    const int current = mesh_entity_->currentData().toInt();
+    mesh_entity_->blockSignals(true);
+    mesh_entity_->clear();
+    mesh_entity_->addItem("All", -1);
+    for (size_t i = 0; i < mesh_entities_.size(); ++i) {
+      const auto& ent = mesh_entities_[i];
+      const QString label = QString("%1:%2").arg(ent.dim).arg(ent.tag);
+      mesh_entity_->addItem(label, static_cast<int>(i));
+    }
+    int idx = mesh_entity_->findData(current);
+    if (idx < 0) {
+      idx = 0;
+    }
+    mesh_entity_->setCurrentIndex(idx);
+    mesh_entity_->blockSignals(false);
   }
 
   if (mesh_type_) {
@@ -1432,6 +1876,12 @@ void VtkViewer::update_mesh_pipeline() {
   if (!mesh_type_threshold_) {
     mesh_type_threshold_ = vtkSmartPointer<vtkThreshold>::New();
   }
+  if (!mesh_entity_dim_threshold_) {
+    mesh_entity_dim_threshold_ = vtkSmartPointer<vtkThreshold>::New();
+  }
+  if (!mesh_entity_tag_threshold_) {
+    mesh_entity_tag_threshold_ = vtkSmartPointer<vtkThreshold>::New();
+  }
   if (!mesh_slice_plane_) {
     mesh_slice_plane_ = vtkSmartPointer<vtkPlane>::New();
   }
@@ -1463,9 +1913,12 @@ void VtkViewer::update_mesh_pipeline() {
 
   int dim_filter = mesh_dim_ ? mesh_dim_->currentData().toInt() : -1;
   int group_index = mesh_group_ ? mesh_group_->currentData().toInt() : -1;
+  int entity_index = mesh_entity_ ? mesh_entity_->currentData().toInt() : -1;
   const int type_filter = mesh_type_ ? mesh_type_->currentData().toInt() : -1;
   int group_dim = -1;
   int group_id = -1;
+  int entity_dim = -1;
+  int entity_tag = -1;
   if (group_index >= 0 &&
       group_index < static_cast<int>(mesh_groups_.size())) {
     const auto& g = mesh_groups_[group_index];
@@ -1480,6 +1933,35 @@ void VtkViewer::update_mesh_pipeline() {
         mesh_dim_->blockSignals(false);
       }
     }
+  }
+  if (entity_index >= 0 &&
+      entity_index < static_cast<int>(mesh_entities_.size())) {
+    const auto& ent = mesh_entities_[entity_index];
+    entity_dim = ent.dim;
+    entity_tag = ent.tag;
+    dim_filter = ent.dim;
+    if (mesh_dim_) {
+      const int dim_idx = mesh_dim_->findData(entity_dim);
+      if (dim_idx >= 0 && mesh_dim_->currentIndex() != dim_idx) {
+        mesh_dim_->blockSignals(true);
+        mesh_dim_->setCurrentIndex(dim_idx);
+        mesh_dim_->blockSignals(false);
+      }
+    }
+  }
+  if (group_index >= 0 && group_id >= 0) {
+    selected_group_dim_ = group_dim;
+    selected_group_id_ = group_id;
+  } else if (mesh_group_ && mesh_group_->currentData().toInt() < 0) {
+    selected_group_dim_ = -1;
+    selected_group_id_ = -1;
+  }
+  if (entity_index >= 0 && entity_tag >= 0 && entity_dim >= 0) {
+    selected_entity_dim_ = entity_dim;
+    selected_entity_tag_ = entity_tag;
+  } else if (mesh_entity_ && mesh_entity_->currentData().toInt() < 0) {
+    selected_entity_dim_ = -1;
+    selected_entity_tag_ = -1;
   }
 
   vtkAlgorithmOutput* current_port = nullptr;
@@ -1503,6 +1985,25 @@ void VtkViewer::update_mesh_pipeline() {
     mesh_group_threshold_->SetLowerThreshold(group_id);
     mesh_group_threshold_->SetUpperThreshold(group_id);
     current_port = mesh_group_threshold_->GetOutputPort();
+  }
+
+  if (entity_index >= 0 && entity_tag >= 0 && entity_dim >= 0) {
+    if (current_port) {
+      mesh_entity_dim_threshold_->SetInputConnection(current_port);
+    } else {
+      mesh_entity_dim_threshold_->SetInputData(mesh_grid_);
+    }
+    mesh_entity_dim_threshold_->SetInputArrayToProcess(
+        0, 0, 0, vtkDataObject::FIELD_ASSOCIATION_CELLS, "entity_dim");
+    mesh_entity_dim_threshold_->SetLowerThreshold(entity_dim);
+    mesh_entity_dim_threshold_->SetUpperThreshold(entity_dim);
+    mesh_entity_tag_threshold_->SetInputConnection(
+        mesh_entity_dim_threshold_->GetOutputPort());
+    mesh_entity_tag_threshold_->SetInputArrayToProcess(
+        0, 0, 0, vtkDataObject::FIELD_ASSOCIATION_CELLS, "entity_tag");
+    mesh_entity_tag_threshold_->SetLowerThreshold(entity_tag);
+    mesh_entity_tag_threshold_->SetUpperThreshold(entity_tag);
+    current_port = mesh_entity_tag_threshold_->GetOutputPort();
   }
 
   if (type_filter >= 0) {
@@ -1594,6 +2095,8 @@ void VtkViewer::update_mesh_pipeline() {
 
   update_nodes_visibility();
   apply_mesh_visuals();
+  update_selection_pipeline();
+  update_scene_extras();
   if (render_window_) {
     render_window_->Render();
   }
@@ -1719,6 +2222,9 @@ void VtkViewer::handle_pick(int x, int y) {
   int phys_id = -1;
   int phys_dim = -1;
   int elem_type = -1;
+  int cell_index = -1;
+  int ent_dim = -1;
+  int ent_tag = -1;
   double quality = 0.0;
   if (cd) {
     if (auto* arr = vtkIntArray::SafeDownCast(cd->GetArray("phys_id"))) {
@@ -1734,6 +2240,21 @@ void VtkViewer::handle_pick(int x, int y) {
     if (auto* arr = vtkIntArray::SafeDownCast(cd->GetArray("elem_type"))) {
       if (cell_id < arr->GetNumberOfTuples()) {
         elem_type = arr->GetValue(cell_id);
+      }
+    }
+    if (auto* arr = vtkIntArray::SafeDownCast(cd->GetArray("cell_id"))) {
+      if (cell_id < arr->GetNumberOfTuples()) {
+        cell_index = arr->GetValue(cell_id);
+      }
+    }
+    if (auto* arr = vtkIntArray::SafeDownCast(cd->GetArray("entity_dim"))) {
+      if (cell_id < arr->GetNumberOfTuples()) {
+        ent_dim = arr->GetValue(cell_id);
+      }
+    }
+    if (auto* arr = vtkIntArray::SafeDownCast(cd->GetArray("entity_tag"))) {
+      if (cell_id < arr->GetNumberOfTuples()) {
+        ent_tag = arr->GetValue(cell_id);
       }
     }
     if (auto* arr = cd->GetArray("Quality")) {
@@ -1756,16 +2277,264 @@ void VtkViewer::handle_pick(int x, int y) {
       group_name.isEmpty()
           ? QString("%1:%2").arg(phys_dim).arg(phys_id)
           : QString("%1:%2 %3").arg(phys_dim).arg(phys_id).arg(group_name);
+  const QString ent_label =
+      (ent_dim >= 0 && ent_tag >= 0)
+          ? QString("%1:%2").arg(ent_dim).arg(ent_tag)
+          : QString("n/a");
   if (pick_info_) {
-    pick_info_->setText(QString("Pick: cell=%1 group=%2 type=%3 q=%4")
-                            .arg(cell_id)
+    pick_info_->setText(QString("Pick: cell=%1 group=%2 entity=%3 type=%4 q=%5")
+                            .arg(cell_index >= 0 ? cell_index : cell_id)
                             .arg(group_label)
+                            .arg(ent_label)
                             .arg(elem_type)
                             .arg(quality, 0, 'g', 4));
   }
+  if (phys_dim >= 0 && phys_id >= 0) {
+    emit mesh_group_picked(phys_dim, phys_id);
+  }
+  const int mode = pick_mode_ ? pick_mode_->currentData().toInt() : 0;
+  if (mode == 2) {
+    selected_cell_id_ = cell_index >= 0 ? cell_index : static_cast<int>(cell_id);
+    selected_group_dim_ = phys_dim;
+    selected_group_id_ = phys_id;
+    selected_entity_dim_ = ent_dim;
+    selected_entity_tag_ = ent_tag;
+  } else if (mode == 1) {
+    selected_entity_dim_ = ent_dim;
+    selected_entity_tag_ = ent_tag;
+    selected_group_dim_ = phys_dim;
+    selected_group_id_ = phys_id;
+    selected_cell_id_ = -1;
+    if (ent_dim >= 0 && ent_tag >= 0) {
+      emit mesh_entity_picked(ent_dim, ent_tag);
+    }
+  } else {
+    selected_group_dim_ = phys_dim;
+    selected_group_id_ = phys_id;
+    selected_entity_dim_ = ent_dim;
+    selected_entity_tag_ = ent_tag;
+    selected_cell_id_ = -1;
+  }
+  update_selection_pipeline();
 #else
   Q_UNUSED(x);
   Q_UNUSED(y);
+#endif
+}
+
+void VtkViewer::update_selection_pipeline() {
+#ifdef GMP_ENABLE_VTK_VIEWER
+  if (!renderer_ || !mesh_grid_) {
+    return;
+  }
+  if (!pick_enable_ || !pick_enable_->isChecked()) {
+    if (mesh_select_actor_) {
+      mesh_select_actor_->SetVisibility(false);
+    }
+    return;
+  }
+  if (mode_ != DataMode::Mesh) {
+    if (mesh_select_actor_) {
+      mesh_select_actor_->SetVisibility(false);
+    }
+    return;
+  }
+
+  const int mode = pick_mode_ ? pick_mode_->currentData().toInt() : 0;
+  if (mode == 2 && selected_cell_id_ < 0) {
+    if (mesh_select_actor_) {
+      mesh_select_actor_->SetVisibility(false);
+    }
+    return;
+  }
+  if (mode == 1 && (selected_entity_tag_ < 0 || selected_entity_dim_ < 0)) {
+    if (mesh_select_actor_) {
+      mesh_select_actor_->SetVisibility(false);
+    }
+    return;
+  }
+  if (mode == 0 && (selected_group_id_ < 0 || selected_group_dim_ < 0)) {
+    if (mesh_select_actor_) {
+      mesh_select_actor_->SetVisibility(false);
+    }
+    return;
+  }
+
+  if (!mesh_select_dim_threshold_) {
+    mesh_select_dim_threshold_ = vtkSmartPointer<vtkThreshold>::New();
+  }
+  if (!mesh_select_group_threshold_) {
+    mesh_select_group_threshold_ = vtkSmartPointer<vtkThreshold>::New();
+  }
+  if (!mesh_select_cell_threshold_) {
+    mesh_select_cell_threshold_ = vtkSmartPointer<vtkThreshold>::New();
+  }
+  if (!mesh_select_entity_dim_threshold_) {
+    mesh_select_entity_dim_threshold_ = vtkSmartPointer<vtkThreshold>::New();
+  }
+  if (!mesh_select_entity_tag_threshold_) {
+    mesh_select_entity_tag_threshold_ = vtkSmartPointer<vtkThreshold>::New();
+  }
+  if (!mesh_select_geom_) {
+    mesh_select_geom_ = vtkSmartPointer<vtkDataSetSurfaceFilter>::New();
+  }
+  if (!mesh_select_mapper_) {
+    mesh_select_mapper_ = vtkSmartPointer<vtkDataSetMapper>::New();
+  }
+  if (!mesh_select_actor_) {
+    mesh_select_actor_ = vtkSmartPointer<vtkActor>::New();
+    mesh_select_actor_->SetMapper(mesh_select_mapper_);
+    mesh_select_actor_->GetProperty()->SetColor(1.0, 0.9, 0.2);
+    mesh_select_actor_->GetProperty()->SetLineWidth(2.0);
+    mesh_select_actor_->GetProperty()->SetEdgeVisibility(1);
+    mesh_select_actor_->GetProperty()->SetRepresentationToSurface();
+    renderer_->AddActor(mesh_select_actor_);
+  }
+
+  vtkAlgorithmOutput* current = nullptr;
+  if (mode == 2) {
+    mesh_select_cell_threshold_->SetInputData(mesh_grid_);
+    mesh_select_cell_threshold_->SetInputArrayToProcess(
+        0, 0, 0, vtkDataObject::FIELD_ASSOCIATION_CELLS, "cell_id");
+    mesh_select_cell_threshold_->SetLowerThreshold(selected_cell_id_);
+    mesh_select_cell_threshold_->SetUpperThreshold(selected_cell_id_);
+    current = mesh_select_cell_threshold_->GetOutputPort();
+  } else if (mode == 1) {
+    mesh_select_entity_dim_threshold_->SetInputData(mesh_grid_);
+    mesh_select_entity_dim_threshold_->SetInputArrayToProcess(
+        0, 0, 0, vtkDataObject::FIELD_ASSOCIATION_CELLS, "entity_dim");
+    mesh_select_entity_dim_threshold_->SetLowerThreshold(selected_entity_dim_);
+    mesh_select_entity_dim_threshold_->SetUpperThreshold(selected_entity_dim_);
+    mesh_select_entity_tag_threshold_->SetInputConnection(
+        mesh_select_entity_dim_threshold_->GetOutputPort());
+    mesh_select_entity_tag_threshold_->SetInputArrayToProcess(
+        0, 0, 0, vtkDataObject::FIELD_ASSOCIATION_CELLS, "entity_tag");
+    mesh_select_entity_tag_threshold_->SetLowerThreshold(selected_entity_tag_);
+    mesh_select_entity_tag_threshold_->SetUpperThreshold(selected_entity_tag_);
+    current = mesh_select_entity_tag_threshold_->GetOutputPort();
+  } else {
+    mesh_select_dim_threshold_->SetInputData(mesh_grid_);
+    mesh_select_dim_threshold_->SetInputArrayToProcess(
+        0, 0, 0, vtkDataObject::FIELD_ASSOCIATION_CELLS, "phys_dim");
+    mesh_select_dim_threshold_->SetLowerThreshold(selected_group_dim_);
+    mesh_select_dim_threshold_->SetUpperThreshold(selected_group_dim_);
+    mesh_select_group_threshold_->SetInputConnection(
+        mesh_select_dim_threshold_->GetOutputPort());
+    mesh_select_group_threshold_->SetInputArrayToProcess(
+        0, 0, 0, vtkDataObject::FIELD_ASSOCIATION_CELLS, "phys_id");
+    mesh_select_group_threshold_->SetLowerThreshold(selected_group_id_);
+    mesh_select_group_threshold_->SetUpperThreshold(selected_group_id_);
+    current = mesh_select_group_threshold_->GetOutputPort();
+  }
+
+  mesh_select_geom_->SetInputConnection(current);
+  mesh_select_mapper_->SetInputConnection(mesh_select_geom_->GetOutputPort());
+  mesh_select_actor_->SetVisibility(true);
+  if (render_window_) {
+    render_window_->Render();
+  }
+#endif
+}
+
+void VtkViewer::update_scene_extras() {
+#ifdef GMP_ENABLE_VTK_VIEWER
+  if (!renderer_) {
+    return;
+  }
+  vtkDataSet* data = nullptr;
+  if (mode_ == DataMode::Mesh && mesh_grid_) {
+    data = mesh_grid_;
+  } else if (mode_ == DataMode::Exodus && geom_) {
+    data = geom_->GetOutput();
+  }
+  if (show_axes_) {
+    if (!axes_actor_) {
+      axes_actor_ = vtkSmartPointer<vtkAxesActor>::New();
+      axes_actor_->SetPickable(0);
+      renderer_->AddActor(axes_actor_);
+    }
+    if (data) {
+      double bounds[6] = {0, 0, 0, 0, 0, 0};
+      data->GetBounds(bounds);
+      const double dx = bounds[1] - bounds[0];
+      const double dy = bounds[3] - bounds[2];
+      const double dz = bounds[5] - bounds[4];
+      const double len = std::max({dx, dy, dz, 1.0});
+      axes_actor_->SetTotalLength(len * 0.2, len * 0.2, len * 0.2);
+    }
+    axes_actor_->SetVisibility(show_axes_->isChecked() ? 1 : 0);
+  }
+
+  if (show_outline_) {
+    if (!outline_filter_) {
+      outline_filter_ = vtkSmartPointer<vtkOutlineFilter>::New();
+      outline_mapper_ = vtkSmartPointer<vtkPolyDataMapper>::New();
+      outline_actor_ = vtkSmartPointer<vtkActor>::New();
+      outline_actor_->SetMapper(outline_mapper_);
+      outline_actor_->GetProperty()->SetColor(0.8, 0.8, 0.8);
+      outline_actor_->GetProperty()->SetLineWidth(1.5);
+      renderer_->AddActor(outline_actor_);
+    }
+    if (data) {
+      outline_filter_->SetInputData(data);
+      outline_mapper_->SetInputConnection(outline_filter_->GetOutputPort());
+    }
+    outline_actor_->SetVisibility(show_outline_->isChecked() ? 1 : 0);
+  }
+#endif
+}
+
+void VtkViewer::apply_view_preset(int preset) {
+#ifdef GMP_ENABLE_VTK_VIEWER
+  if (!renderer_) {
+    return;
+  }
+  vtkDataSet* data = nullptr;
+  if (mode_ == DataMode::Mesh && mesh_grid_) {
+    data = mesh_grid_;
+  } else if (mode_ == DataMode::Exodus && geom_) {
+    data = geom_->GetOutput();
+  }
+  if (!data) {
+    return;
+  }
+  double bounds[6] = {0, 0, 0, 0, 0, 0};
+  data->GetBounds(bounds);
+  const double cx = (bounds[0] + bounds[1]) * 0.5;
+  const double cy = (bounds[2] + bounds[3]) * 0.5;
+  const double cz = (bounds[4] + bounds[5]) * 0.5;
+  const double dx = bounds[1] - bounds[0];
+  const double dy = bounds[3] - bounds[2];
+  const double dz = bounds[5] - bounds[4];
+  const double max_extent = std::max({dx, dy, dz, 1.0});
+  const double dist = max_extent * 2.5;
+  auto* cam = renderer_->GetActiveCamera();
+  if (!cam) {
+    return;
+  }
+  if (preset == 0) {
+    renderer_->ResetCamera();
+    render_window_->Render();
+    return;
+  }
+  if (preset == 1) {  // Front (+X)
+    cam->SetPosition(cx + dist, cy, cz);
+    cam->SetViewUp(0, 0, 1);
+  } else if (preset == 2) {  // Right (+Y)
+    cam->SetPosition(cx, cy + dist, cz);
+    cam->SetViewUp(0, 0, 1);
+  } else if (preset == 3) {  // Top (+Z)
+    cam->SetPosition(cx, cy, cz + dist);
+    cam->SetViewUp(0, 1, 0);
+  } else {  // Iso
+    cam->SetPosition(cx + dist, cy + dist, cz + dist);
+    cam->SetViewUp(0, 0, 1);
+  }
+  cam->SetFocalPoint(cx, cy, cz);
+  renderer_->ResetCameraClippingRange();
+  render_window_->Render();
+#else
+  Q_UNUSED(preset);
 #endif
 }
 

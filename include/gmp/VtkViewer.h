@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QString>
 #include <QDateTime>
+#include <QVariantMap>
 
 class QLabel;
 class QCheckBox;
@@ -24,6 +25,8 @@ class vtkDataSetSurfaceFilter;
 class vtkUnstructuredGrid;
 class vtkVertexGlyphFilter;
 class vtkShrinkFilter;
+class vtkOutlineFilter;
+class vtkAxesActor;
 class vtkThreshold;
 class vtkPlane;
 class vtkCutter;
@@ -48,11 +51,18 @@ class VtkViewer : public QWidget {
   ~VtkViewer() override = default;
 
  public slots:
- void set_exodus_file(const QString& path);
+  void set_exodus_file(const QString& path);
   void set_exodus_history(const QStringList& paths);
   bool save_screenshot(const QString& path);
   void set_mesh_file(const QString& path);
   void set_mesh_group_filter(int dim, int tag);
+  void set_mesh_entity_filter(int dim, int tag);
+  QVariantMap viewer_settings() const;
+  void apply_viewer_settings(const QVariantMap& settings);
+
+signals:
+  void mesh_group_picked(int dim, int tag);
+  void mesh_entity_picked(int dim, int tag);
 
  private slots:
   void on_time_changed(int index);
@@ -83,6 +93,9 @@ class VtkViewer : public QWidget {
   void update_mesh_controls();
   void apply_mesh_visuals();
   void handle_pick(int x, int y);
+  void update_selection_pipeline();
+  void update_scene_extras();
+  void apply_view_preset(int preset);
 
   QString current_file_;
   QLabel* file_label_ = nullptr;
@@ -100,12 +113,19 @@ class VtkViewer : public QWidget {
   QLabel* mesh_legend_ = nullptr;
   QComboBox* mesh_group_ = nullptr;
   QComboBox* mesh_dim_ = nullptr;
+  QComboBox* mesh_entity_ = nullptr;
   QComboBox* mesh_type_ = nullptr;
   QDoubleSpinBox* mesh_opacity_ = nullptr;
   QDoubleSpinBox* mesh_shrink_ = nullptr;
   QCheckBox* mesh_scalar_bar_ = nullptr;
   QCheckBox* pick_enable_ = nullptr;
+  QComboBox* pick_mode_ = nullptr;
+  QPushButton* pick_clear_ = nullptr;
   QLabel* pick_info_ = nullptr;
+  QCheckBox* show_axes_ = nullptr;
+  QCheckBox* show_outline_ = nullptr;
+  QComboBox* view_combo_ = nullptr;
+  QPushButton* view_apply_ = nullptr;
   QCheckBox* slice_enable_ = nullptr;
   QComboBox* slice_axis_ = nullptr;
   QSlider* slice_slider_ = nullptr;
@@ -137,8 +157,18 @@ class VtkViewer : public QWidget {
     int id = 0;
     QString name;
   };
+  struct MeshEntity {
+    int dim = 0;
+    int tag = 0;
+  };
   std::vector<MeshGroup> mesh_groups_;
   std::vector<int> mesh_elem_types_;
+  std::vector<MeshEntity> mesh_entities_;
+  int selected_group_dim_ = -1;
+  int selected_group_id_ = -1;
+  int selected_cell_id_ = -1;
+  int selected_entity_dim_ = -1;
+  int selected_entity_tag_ = -1;
 
   vtkSmartPointer<vtkGenericOpenGLRenderWindow> render_window_;
   vtkSmartPointer<vtkRenderer> renderer_;
@@ -150,6 +180,16 @@ class VtkViewer : public QWidget {
   vtkSmartPointer<vtkThreshold> mesh_dim_threshold_;
   vtkSmartPointer<vtkThreshold> mesh_group_threshold_;
   vtkSmartPointer<vtkThreshold> mesh_type_threshold_;
+  vtkSmartPointer<vtkThreshold> mesh_entity_dim_threshold_;
+  vtkSmartPointer<vtkThreshold> mesh_entity_tag_threshold_;
+  vtkSmartPointer<vtkThreshold> mesh_select_dim_threshold_;
+  vtkSmartPointer<vtkThreshold> mesh_select_group_threshold_;
+  vtkSmartPointer<vtkThreshold> mesh_select_cell_threshold_;
+  vtkSmartPointer<vtkThreshold> mesh_select_entity_dim_threshold_;
+  vtkSmartPointer<vtkThreshold> mesh_select_entity_tag_threshold_;
+  vtkSmartPointer<vtkDataSetSurfaceFilter> mesh_select_geom_;
+  vtkSmartPointer<vtkDataSetMapper> mesh_select_mapper_;
+  vtkSmartPointer<vtkActor> mesh_select_actor_;
   vtkSmartPointer<vtkPlane> mesh_slice_plane_;
   vtkSmartPointer<vtkCutter> mesh_slice_cutter_;
   vtkSmartPointer<vtkDataSetMapper> mapper_;
@@ -159,6 +199,10 @@ class VtkViewer : public QWidget {
   vtkSmartPointer<vtkActor> nodes_actor_;
   vtkSmartPointer<vtkScalarBarActor> scalar_bar_;
   vtkSmartPointer<vtkLookupTable> lut_;
+  vtkSmartPointer<vtkOutlineFilter> outline_filter_;
+  vtkSmartPointer<vtkPolyDataMapper> outline_mapper_;
+  vtkSmartPointer<vtkActor> outline_actor_;
+  vtkSmartPointer<vtkAxesActor> axes_actor_;
   vtkSmartPointer<vtkCellPicker> picker_;
   vtkSmartPointer<vtkCallbackCommand> pick_callback_;
   bool first_render_ = true;

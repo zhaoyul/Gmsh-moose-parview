@@ -28,8 +28,13 @@ class GmshPanel : public QWidget {
   void generate_mesh();
   QVariantMap gmsh_settings() const;
   void apply_gmsh_settings(const QVariantMap& settings);
+  void select_physical_group(int dim, int tag);
+  void apply_entity_pick(int dim, int tag);
 
-signals:
+ protected:
+  bool eventFilter(QObject* obj, QEvent* event) override;
+
+ signals:
   void mesh_written(const QString& path);
   void boundary_groups(const QStringList& names);
   void physical_group_selected(int dim, int tag);
@@ -165,6 +170,8 @@ signals:
 
   QLineEdit* output_path_ = nullptr;
   QPlainTextEdit* log_ = nullptr;
+  QSet<QLineEdit*> entity_inputs_;
+  QLineEdit* active_entity_input_ = nullptr;
   bool gmsh_ready_ = false;
   bool model_loaded_ = false;
 };

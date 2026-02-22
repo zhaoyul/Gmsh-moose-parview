@@ -42,6 +42,8 @@ class MoosePanel : public QWidget {
                           const QString& kernels,
                           const QString& outputs,
                           const QString& executioner);
+  QVariantMap moose_settings() const;
+  void apply_moose_settings(const QVariantMap& settings);
   void set_template_by_key(const QString& key, bool apply_now = true);
   void run_job();
   void check_input();

@@ -6,6 +6,7 @@
 #include <QDoubleSpinBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -23,6 +24,7 @@
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QHeaderView>
+#include <QAbstractItemView>
 #include <QString>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -43,6 +45,23 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   scroll->setWidgetResizable(true);
   auto* content = new QWidget();
   auto* content_layout = new QVBoxLayout(content);
+  auto register_entity_input = [this](QLineEdit* edit) {
+    if (!edit) {
+      return;
+    }
+    entity_inputs_.insert(edit);
+    edit->installEventFilter(this);
+  };
+  auto tune_dim_combo = [](QComboBox* combo) {
+    if (!combo) {
+      return;
+    }
+    combo->setMinimumWidth(70);
+    combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    if (combo->view()) {
+      combo->view()->setMinimumWidth(90);
+    }
+  };
 
   auto* title = new QLabel("Gmsh Panel");
   content_layout->addWidget(title);
@@ -82,6 +101,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   entity_dim_->addItem("1", 1);
   entity_dim_->addItem("2", 2);
   entity_dim_->addItem("3", 3);
+  tune_dim_combo(entity_dim_);
   connect(entity_dim_, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &GmshPanel::on_entity_dim_changed);
   auto* refresh_btn = new QPushButton("Refresh");
@@ -192,15 +212,18 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   transform_dim_->addItem("1", 1);
   transform_dim_->addItem("2", 2);
   transform_dim_->addItem("3", 3);
+  tune_dim_combo(transform_dim_);
   transform_ids_ = new QLineEdit();
   transform_ids_->setPlaceholderText("IDs or dim:tag (e.g. 1,2 or 2:5). Empty = all.");
   auto* transform_pick = new QPushButton("Pick");
   connect(transform_pick, &QPushButton::clicked, this, [this]() {
     const int dim = transform_dim_ ? transform_dim_->currentData().toInt() : -1;
+    active_entity_input_ = transform_ids_;
     transform_ids_->setText(
         pick_entities_dialog(dim, "Select Transform Entities",
                              transform_ids_->text()));
   });
+  register_entity_input(transform_ids_);
   sel_row->addWidget(new QLabel("Dim"));
   sel_row->addWidget(transform_dim_);
   sel_row->addWidget(new QLabel("IDs"));
@@ -327,6 +350,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   boolean_dim_->addItem("2", 2);
   boolean_dim_->addItem("1", 1);
   boolean_dim_->addItem("0", 0);
+  tune_dim_combo(boolean_dim_);
   bool_row->addWidget(new QLabel("Dim"));
   bool_row->addWidget(boolean_dim_);
   boolean_obj_ids_ = new QLineEdit();
@@ -336,6 +360,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   auto* boolean_obj_pick = new QPushButton("Pick");
   connect(boolean_obj_pick, &QPushButton::clicked, this, [this]() {
     const int dim = boolean_dim_ ? boolean_dim_->currentData().toInt() : -1;
+    active_entity_input_ = boolean_obj_ids_;
     boolean_obj_ids_->setText(
         pick_entities_dialog(dim, "Select Boolean Objects",
                              boolean_obj_ids_->text()));
@@ -343,15 +368,18 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   auto* boolean_tool_pick = new QPushButton("Pick");
   connect(boolean_tool_pick, &QPushButton::clicked, this, [this]() {
     const int dim = boolean_dim_ ? boolean_dim_->currentData().toInt() : -1;
+    active_entity_input_ = boolean_tool_ids_;
     boolean_tool_ids_->setText(
         pick_entities_dialog(dim, "Select Boolean Tools",
                              boolean_tool_ids_->text()));
   });
   bool_row->addWidget(new QLabel("Obj"));
   bool_row->addWidget(boolean_obj_ids_, 1);
+  register_entity_input(boolean_obj_ids_);
   bool_row->addWidget(boolean_obj_pick);
   bool_row->addWidget(new QLabel("Tool"));
   bool_row->addWidget(boolean_tool_ids_, 1);
+  register_entity_input(boolean_tool_ids_);
   bool_row->addWidget(boolean_tool_pick);
   auto* bool_container = new QWidget();
   bool_container->setLayout(bool_row);
@@ -410,6 +438,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   phys_group_dim_->addItem("1", 1);
   phys_group_dim_->addItem("2", 2);
   phys_group_dim_->addItem("3", 3);
+  tune_dim_combo(phys_group_dim_);
   phys_group_name_ = new QLineEdit();
   phys_group_name_->setPlaceholderText("Name");
   phys_row->addWidget(new QLabel("Dim"));
@@ -426,12 +455,14 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   auto* phys_entities_pick = new QPushButton("Pick");
   connect(phys_entities_pick, &QPushButton::clicked, this, [this]() {
     const int dim = phys_group_dim_ ? phys_group_dim_->currentData().toInt() : -1;
+    active_entity_input_ = phys_group_entities_;
     phys_group_entities_->setText(
         pick_entities_dialog(dim, "Select Physical Group Entities",
                              phys_group_entities_->text()));
   });
   phys_entities_row->addWidget(phys_group_entities_, 1);
   phys_entities_row->addWidget(phys_entities_pick);
+  register_entity_input(phys_group_entities_);
   auto* phys_entities_container = new QWidget();
   phys_entities_container->setLayout(phys_entities_row);
   phys_form->addRow("Entities", phys_entities_container);
@@ -490,11 +521,13 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   field_dim_->addItem("1", 1);
   field_dim_->addItem("2", 2);
   field_dim_->addItem("3", 3);
+  tune_dim_combo(field_dim_);
   field_entities_ = new QLineEdit();
   field_entities_->setPlaceholderText("Entity IDs or dim:tag list");
   auto* field_entities_pick = new QPushButton("Pick");
   connect(field_entities_pick, &QPushButton::clicked, this, [this]() {
     const int dim = field_dim_ ? field_dim_->currentData().toInt() : -1;
+    active_entity_input_ = field_entities_;
     field_entities_->setText(
         pick_entities_dialog(dim, "Select Field Entities",
                              field_entities_->text()));
@@ -504,6 +537,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   field_sel->addWidget(new QLabel("Entities"));
   field_sel->addWidget(field_entities_, 1);
   field_sel->addWidget(field_entities_pick);
+  register_entity_input(field_entities_);
   auto* field_sel_container = new QWidget();
   field_sel_container->setLayout(field_sel);
   field_form->addRow("Targets", field_sel_container);
@@ -574,6 +608,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   entity_size_dim_->addItem("1", 1);
   entity_size_dim_->addItem("2", 2);
   entity_size_dim_->addItem("3", 3);
+  tune_dim_combo(entity_size_dim_);
   entity_size_ids_ = new QLineEdit();
   entity_size_ids_->setPlaceholderText("IDs or dim:tag list");
   entity_size_value_ = new QDoubleSpinBox();
@@ -582,6 +617,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   auto* entity_size_pick = new QPushButton("Pick");
   connect(entity_size_pick, &QPushButton::clicked, this, [this]() {
     const int dim = entity_size_dim_ ? entity_size_dim_->currentData().toInt() : -1;
+    active_entity_input_ = entity_size_ids_;
     entity_size_ids_->setText(
         pick_entities_dialog(dim, "Select Entities for Size",
                              entity_size_ids_->text()));
@@ -597,6 +633,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   entity_size_row->addWidget(new QLabel("IDs"));
   entity_size_row->addWidget(entity_size_ids_, 1);
   entity_size_row->addWidget(entity_size_pick);
+  register_entity_input(entity_size_ids_);
   entity_size_row->addWidget(new QLabel("Size"));
   entity_size_row->addWidget(entity_size_value_);
   entity_size_row->addWidget(entity_size_apply_);
@@ -970,6 +1007,16 @@ void GmshPanel::generate_mesh() {
   on_generate();
 }
 
+bool GmshPanel::eventFilter(QObject* obj, QEvent* event) {
+  if (event && event->type() == QEvent::FocusIn) {
+    auto* edit = qobject_cast<QLineEdit*>(obj);
+    if (edit && entity_inputs_.contains(edit)) {
+      active_entity_input_ = edit;
+    }
+  }
+  return QWidget::eventFilter(obj, event);
+}
+
 void GmshPanel::on_open_geometry() {
 #ifndef GMP_ENABLE_GMSH_GUI
   append_log("Gmsh is not enabled in this build.");
@@ -1168,6 +1215,7 @@ void GmshPanel::on_generate() {
 
     const int dim = infer_mesh_dim();
     gmsh::model::mesh::generate(dim);
+    const int boundary_dim = std::max(0, dim - 1);
 
     const QString out_path = output_path_->text();
     QDir().mkpath(QFileInfo(out_path).absolutePath());
@@ -1177,7 +1225,7 @@ void GmshPanel::on_generate() {
     gmsh::model::getPhysicalGroups(phys_groups);
     QStringList boundary_names;
     for (const auto& p : phys_groups) {
-      if (p.first != 2) {
+      if (p.first != boundary_dim) {
         continue;
       }
       std::string name;
@@ -1545,6 +1593,20 @@ void GmshPanel::on_physical_group_selected(int) {
     return;
   }
   emit physical_group_selected(dim, tag);
+  if (phys_group_table_) {
+    for (int row = 0; row < phys_group_table_->rowCount(); ++row) {
+      bool row_ok_dim = false;
+      bool row_ok_tag = false;
+      const int row_dim =
+          phys_group_table_->item(row, 0)->text().toInt(&row_ok_dim);
+      const int row_tag =
+          phys_group_table_->item(row, 1)->text().toInt(&row_ok_tag);
+      if (row_ok_dim && row_ok_tag && row_dim == dim && row_tag == tag) {
+        phys_group_table_->setCurrentCell(row, 0);
+        break;
+      }
+    }
+  }
   if (phys_group_dim_) {
     const int idx = phys_group_dim_->findData(dim);
     if (idx >= 0) {
@@ -1565,6 +1627,77 @@ void GmshPanel::on_physical_group_selected(int) {
   if (phys_group_entities_) {
     phys_group_entities_->setText(ids.join(", "));
   }
+#endif
+}
+
+void GmshPanel::select_physical_group(int dim, int tag) {
+#ifndef GMP_ENABLE_GMSH_GUI
+  Q_UNUSED(dim);
+  Q_UNUSED(tag);
+  return;
+#else
+  if (!phys_group_list_) {
+    return;
+  }
+  const QString key = QString("%1:%2").arg(dim).arg(tag);
+  const int idx = phys_group_list_->findData(key);
+  if (idx >= 0) {
+    phys_group_list_->setCurrentIndex(idx);
+  } else {
+    phys_group_list_->setCurrentIndex(0);
+  }
+#endif
+}
+
+void GmshPanel::apply_entity_pick(int dim, int tag) {
+#ifndef GMP_ENABLE_GMSH_GUI
+  Q_UNUSED(dim);
+  Q_UNUSED(tag);
+  return;
+#else
+  if (!active_entity_input_) {
+    append_log("Pick: focus an entity input field first.");
+    return;
+  }
+  int dim_filter = -1;
+  if (active_entity_input_ == transform_ids_ && transform_dim_) {
+    dim_filter = transform_dim_->currentData().toInt();
+  } else if (active_entity_input_ == boolean_obj_ids_ && boolean_dim_) {
+    dim_filter = boolean_dim_->currentData().toInt();
+  } else if (active_entity_input_ == boolean_tool_ids_ && boolean_dim_) {
+    dim_filter = boolean_dim_->currentData().toInt();
+  } else if (active_entity_input_ == phys_group_entities_ && phys_group_dim_) {
+    dim_filter = phys_group_dim_->currentData().toInt();
+  } else if (active_entity_input_ == field_entities_ && field_dim_) {
+    dim_filter = field_dim_->currentData().toInt();
+  } else if (active_entity_input_ == entity_size_ids_ && entity_size_dim_) {
+    dim_filter = entity_size_dim_->currentData().toInt();
+  }
+
+  const bool same_dim = dim_filter >= 0 && dim_filter == dim;
+  const QString token = same_dim ? QString::number(tag)
+                                 : QString("%1:%2").arg(dim).arg(tag);
+  const QString text = active_entity_input_->text();
+  QStringList parts =
+      text.split(QRegularExpression("[,\\s]+"), Qt::SkipEmptyParts);
+  QSet<QString> existing;
+  for (const auto& part : parts) {
+    if (part.contains(":")) {
+      existing.insert(part);
+    } else if (dim_filter >= 0) {
+      existing.insert(QString("%1:%2").arg(dim_filter).arg(part));
+    } else {
+      existing.insert(part);
+    }
+  }
+  const QString key = same_dim
+                          ? QString("%1:%2").arg(dim_filter).arg(tag)
+                          : QString("%1:%2").arg(dim).arg(tag);
+  if (!existing.contains(key)) {
+    parts << token;
+  }
+  active_entity_input_->setText(parts.join(", "));
+  active_entity_input_->setFocus();
 #endif
 }
 
@@ -1872,7 +2005,8 @@ void GmshPanel::update_physical_group_list() {
 
   QStringList boundary_names;
   std::vector<std::pair<int, int>> bnd_groups;
-  gmsh::model::getPhysicalGroups(bnd_groups, 2);
+  const int boundary_dim = std::max(0, infer_mesh_dim() - 1);
+  gmsh::model::getPhysicalGroups(bnd_groups, boundary_dim);
   for (const auto& g : bnd_groups) {
     std::string name;
     gmsh::model::getPhysicalName(g.first, g.second, name);

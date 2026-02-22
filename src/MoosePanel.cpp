@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMap>
 #include <QRegularExpression>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -355,6 +356,72 @@ void MoosePanel::set_boundary_groups(const QStringList& names) {
   if (!updated.isEmpty()) {
     input_editor_->setPlainText(updated);
     append_log("BCs block updated from physical groups.");
+  }
+  save_settings();
+}
+
+QVariantMap MoosePanel::moose_settings() const {
+  QVariantMap map;
+  map.insert("exec_path", exec_path_ ? exec_path_->currentText() : "");
+  map.insert("input_path", input_path_ ? input_path_->text() : "");
+  map.insert("workdir", workdir_path_ ? workdir_path_->text() : "");
+  map.insert("mesh_path", mesh_path_ ? mesh_path_->text() : "");
+  map.insert("use_mpi", use_mpi_ && use_mpi_->isChecked());
+  map.insert("mpi_ranks", mpi_ranks_ ? mpi_ranks_->value() : 1);
+  map.insert("runner_kind",
+             runner_kind_ ? runner_kind_->currentIndex() : 0);
+  map.insert("template_key",
+             template_kind_ ? template_kind_->currentData().toString() : "");
+  map.insert("extra_args", extra_args_ ? extra_args_->text() : "");
+  map.insert("input_text", input_editor_ ? input_editor_->toPlainText() : "");
+  return map;
+}
+
+void MoosePanel::apply_moose_settings(const QVariantMap& settings) {
+  if (exec_path_) {
+    const QString exec_path =
+        settings.value("exec_path", exec_path_->currentText()).toString();
+    if (!exec_path.isEmpty()) {
+      update_exec_history(exec_path);
+    }
+    exec_path_->setCurrentText(exec_path);
+  }
+  if (input_path_) {
+    input_path_->setText(
+        settings.value("input_path", input_path_->text()).toString());
+  }
+  if (workdir_path_) {
+    workdir_path_->setText(
+        settings.value("workdir", workdir_path_->text()).toString());
+  }
+  if (mesh_path_) {
+    mesh_path_->setText(
+        settings.value("mesh_path", mesh_path_->text()).toString());
+  }
+  if (use_mpi_) {
+    use_mpi_->setChecked(
+        settings.value("use_mpi", use_mpi_->isChecked()).toBool());
+  }
+  if (mpi_ranks_) {
+    mpi_ranks_->setValue(
+        settings.value("mpi_ranks", mpi_ranks_->value()).toInt());
+  }
+  if (runner_kind_) {
+    runner_kind_->setCurrentIndex(
+        settings.value("runner_kind", runner_kind_->currentIndex()).toInt());
+  }
+  const QString template_key = settings.value("template_key").toString();
+  const QString input_text = settings.value("input_text").toString();
+  if (!template_key.isEmpty()) {
+    const bool apply_now = input_text.isEmpty();
+    set_template_by_key(template_key, apply_now);
+  }
+  if (extra_args_) {
+    extra_args_->setText(
+        settings.value("extra_args", extra_args_->text()).toString());
+  }
+  if (input_editor_ && !input_text.isEmpty()) {
+    input_editor_->setPlainText(input_text);
   }
   save_settings();
 }
@@ -1519,8 +1586,19 @@ QStringList MoosePanel::read_boundary_groups_from_mesh(const QString& mesh_path)
     gmsh::open(mesh_path.toStdString());
     std::vector<std::pair<int, int>> phys_groups;
     gmsh::model::getPhysicalGroups(phys_groups);
+    int max_dim = 0;
+    {
+      std::vector<std::pair<int, int>> ents;
+      gmsh::model::getEntities(ents);
+      for (const auto& e : ents) {
+        if (e.first > max_dim) {
+          max_dim = e.first;
+        }
+      }
+    }
+    const int boundary_dim = std::max(0, max_dim - 1);
     for (const auto& p : phys_groups) {
-      if (p.first != 2) {
+      if (p.first != boundary_dim) {
         continue;
       }
       std::string name;
@@ -1545,6 +1623,8 @@ QStringList MoosePanel::parse_msh_physical_groups(const QString& mesh_path) cons
     return names;
   }
 
+  QMap<int, QStringList> names_by_dim;
+  int max_dim = 0;
   bool in_section = false;
   while (!file.atEnd()) {
     const QByteArray raw = file.readLine();
@@ -1566,13 +1646,18 @@ QStringList MoosePanel::parse_msh_physical_groups(const QString& mesh_path) cons
       if (m.hasMatch()) {
         const int dim = m.captured(1).toInt();
         const QString name = m.captured(3);
-        if (dim == 2 && !name.isEmpty()) {
-          names << name;
+        if (dim > max_dim) {
+          max_dim = dim;
+        }
+        if (!name.isEmpty()) {
+          names_by_dim[dim] << name;
         }
       }
     }
   }
 
+  const int boundary_dim = std::max(0, max_dim - 1);
+  names = names_by_dim.value(boundary_dim);
   return names;
 }
 
