@@ -23,13 +23,17 @@ class vtkCompositeDataGeometryFilter;
 class vtkDataSetSurfaceFilter;
 class vtkUnstructuredGrid;
 class vtkVertexGlyphFilter;
+class vtkShrinkFilter;
 class vtkThreshold;
 class vtkPlane;
 class vtkCutter;
+class vtkDataSetMapper;
 class vtkPolyDataMapper;
 class vtkActor;
 class vtkScalarBarActor;
 class vtkLookupTable;
+class vtkCellPicker;
+class vtkCallbackCommand;
 
 #include <vtkSmartPointer.h>
 #include <vector>
@@ -44,10 +48,11 @@ class VtkViewer : public QWidget {
   ~VtkViewer() override = default;
 
  public slots:
-  void set_exodus_file(const QString& path);
+ void set_exodus_file(const QString& path);
   void set_exodus_history(const QStringList& paths);
   bool save_screenshot(const QString& path);
   void set_mesh_file(const QString& path);
+  void set_mesh_group_filter(int dim, int tag);
 
  private slots:
   void on_time_changed(int index);
@@ -76,6 +81,8 @@ class VtkViewer : public QWidget {
   void update_nodes_visibility();
   void update_mesh_pipeline();
   void update_mesh_controls();
+  void apply_mesh_visuals();
+  void handle_pick(int x, int y);
 
   QString current_file_;
   QLabel* file_label_ = nullptr;
@@ -87,9 +94,18 @@ class VtkViewer : public QWidget {
   QCheckBox* auto_refresh_ = nullptr;
   QCheckBox* show_nodes_ = nullptr;
   QCheckBox* show_quality_ = nullptr;
+  QCheckBox* show_faces_ = nullptr;
+  QCheckBox* show_edges_ = nullptr;
+  QCheckBox* show_shell_ = nullptr;
   QLabel* mesh_legend_ = nullptr;
   QComboBox* mesh_group_ = nullptr;
   QComboBox* mesh_dim_ = nullptr;
+  QComboBox* mesh_type_ = nullptr;
+  QDoubleSpinBox* mesh_opacity_ = nullptr;
+  QDoubleSpinBox* mesh_shrink_ = nullptr;
+  QCheckBox* mesh_scalar_bar_ = nullptr;
+  QCheckBox* pick_enable_ = nullptr;
+  QLabel* pick_info_ = nullptr;
   QCheckBox* slice_enable_ = nullptr;
   QComboBox* slice_axis_ = nullptr;
   QSlider* slice_slider_ = nullptr;
@@ -122,6 +138,7 @@ class VtkViewer : public QWidget {
     QString name;
   };
   std::vector<MeshGroup> mesh_groups_;
+  std::vector<int> mesh_elem_types_;
 
   vtkSmartPointer<vtkGenericOpenGLRenderWindow> render_window_;
   vtkSmartPointer<vtkRenderer> renderer_;
@@ -129,17 +146,21 @@ class VtkViewer : public QWidget {
   vtkSmartPointer<vtkCompositeDataGeometryFilter> geom_;
   vtkSmartPointer<vtkUnstructuredGrid> mesh_grid_;
   vtkSmartPointer<vtkDataSetSurfaceFilter> mesh_geom_;
+  vtkSmartPointer<vtkShrinkFilter> mesh_shrink_filter_;
   vtkSmartPointer<vtkThreshold> mesh_dim_threshold_;
   vtkSmartPointer<vtkThreshold> mesh_group_threshold_;
+  vtkSmartPointer<vtkThreshold> mesh_type_threshold_;
   vtkSmartPointer<vtkPlane> mesh_slice_plane_;
   vtkSmartPointer<vtkCutter> mesh_slice_cutter_;
-  vtkSmartPointer<vtkPolyDataMapper> mapper_;
+  vtkSmartPointer<vtkDataSetMapper> mapper_;
   vtkSmartPointer<vtkActor> actor_;
   vtkSmartPointer<vtkVertexGlyphFilter> nodes_filter_;
   vtkSmartPointer<vtkPolyDataMapper> nodes_mapper_;
   vtkSmartPointer<vtkActor> nodes_actor_;
   vtkSmartPointer<vtkScalarBarActor> scalar_bar_;
   vtkSmartPointer<vtkLookupTable> lut_;
+  vtkSmartPointer<vtkCellPicker> picker_;
+  vtkSmartPointer<vtkCallbackCommand> pick_callback_;
   bool first_render_ = true;
   bool pipeline_ready_ = false;
   bool actor_added_ = false;

@@ -1,7 +1,7 @@
 * Abaqus-Like UI Refactor Plan
 ** Status
    - Overall: In Progress
-   - Last Update: 2026-02-20
+   - Last Update: 2026-02-21
 
 ** Goals
    - Provide an Abaqus-like user experience for model setup, solve, and post-processing.
@@ -79,3 +79,77 @@
    - Model Tree: CRUD + YAML save/load + auto sync to MOOSE blocks.
    - Workflow: Mesh/Job/Result nodes auto-populated; results auto-loaded.
    - Remaining: refine typography/spacing; expand MOOSE mapping; add demo cases.
+
+* Gmsh Capability Expansion Plan (libgmsh-only)
+** Goals
+   - Move from “sample box mesh” to a usable Gmsh-like modeling + meshing workflow.
+   - Support CAD/geo import, entity inspection, physical groups, size fields, and mesh controls.
+   - Keep everything non-interactive (no embedded Gmsh GUI), but expose core operations.
+
+** Plan
+*** TODO 1. Geometry IO + Session Controls
+    - [X] Add “Open Geometry” (STEP/IGES/BREP/Geo) to Gmsh panel.
+    - [X] Add “Reset/Clear Model” action (gmsh::clear).
+    - [X] Track current geometry source path in UI.
+    - [X] Entity summary (counts for points/curves/surfaces/volumes).
+    - [X] Ensure mesh preview updates after import.
+
+*** TODO 2. Geometry Primitives & Transforms
+    - [X] Add primitives: Box / Cylinder / Sphere.
+    - [X] Add transforms: Translate / Rotate / Scale (by IDs or selection list).
+    - [X] Add boolean ops: Fuse / Cut / Intersect for volumes.
+    - [X] Show entity list per dimension in UI (IDs + names).
+
+*** TODO 3. Physical Groups Management
+    - [X] List all physical groups by dimension.
+    - [X] Create / rename / delete physical groups.
+    - [X] Assign entities to groups (by selection list).
+    - [X] Sync group names to MOOSE BC list.
+
+*** TODO 4. Mesh Size Controls
+    - [X] Global mesh size + per-entity size.
+    - [X] Distance/Threshold field support (basic local refinement).
+    - [X] Field list UI (create, edit, enable as background).
+
+*** TODO 5. Mesh Algorithms & Options
+    - [X] 2D/3D algorithm selection.
+    - [X] Recombine options (quad/hex).
+    - [X] Optimization level + smoothing.
+    - [X] Element order, high-order optimization.
+
+*** TODO 6. Mesh Inspection & Reporting
+    - [X] Entity + element counts by physical group.
+    - [X] Physical group stats table (dim/tag/name/entity/element).
+    - [X] Quality stats (min/mean/max).
+    - [X] Visual toggles: edges, faces, volume shell.
+    - [X] Mesh viewer group filter (sync from Gmsh panel).
+    - [X] Mesh viewer element-type filter + opacity/shrink.
+    - [X] Mesh pick inspector (cell/group/type/quality).
+
+*** TODO 7. Import/Export Round-Trip
+    - [X] Save mesh (.msh).
+    - [X] Export geometry (BREP / GEO_UNROLLED).
+    - [X] Persist gmsh config in project YAML.
+
+** Execution Checklist (Detailed)
+   - [X] Add GmshPanel “Open Geometry” + filters.
+   - [X] Implement gmsh::model::occ::importShapes + gmsh::open fallback.
+   - [X] Add “Reset Model” button + log update.
+   - [X] Add entity summary panel (counts + IDs).
+   - [X] Wire import to mesh preview.
+   - [X] Add primitives (box/cylinder/sphere) with parameter UI.
+   - [X] Add transforms (translate/rotate/scale).
+   - [X] Add boolean ops for volumes.
+   - [X] Add Physical Group CRUD UI.
+   - [X] Add size fields UI (global + distance/threshold).
+   - [X] Add mesh algo controls + recombine/optimize settings.
+   - [X] Add mesh report + quality stats in log panel.
+   - [X] Add geometry/mesh export.
+   - [X] Persist gmsh settings in project YAML.
+
+** Progress Update (2026-02-21)
+   - Gmsh: Physical group stats table with entity/element counts.
+   - Viewer: Physical group selection now drives mesh group filtering.
+   - Project: Gmsh settings persist in project YAML.
+   - Gmsh: Element order + high-order optimization controls.
+   - Viewer: Added element type filter, shrink/opacity controls, and pick inspector.

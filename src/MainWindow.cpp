@@ -22,6 +22,8 @@
 #include <QFont>
 #include <QPainter>
 #include <QPainterPath>
+#include <QVariantMap>
+#include <QMetaType>
 
 #include <fstream>
 #include <QFileInfo>
@@ -300,6 +302,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
           &MoosePanel::set_boundary_groups);
   connect(mesh_page, &GmshPanel::mesh_written, viewer_,
           &VtkViewer::set_mesh_file);
+  connect(mesh_page, &GmshPanel::physical_group_selected, viewer_,
+          &VtkViewer::set_mesh_group_filter);
   connect(mesh_page, &GmshPanel::mesh_written, this,
           [this](const QString& path) {
             upsert_mesh_item(path);
@@ -1298,6 +1302,38 @@ void MainWindow::load_project(const QString& path) {
     }
     project_path_ = path;
     console_->appendPlainText("Project loaded: " + path);
+    YAML::Node gmsh_node = root["gmsh"];
+    if (gmsh_node && gmsh_node.IsMap() && gmsh_panel_) {
+      QVariantMap gmsh_settings;
+      for (const auto& it : gmsh_node) {
+        const QString key = QString::fromStdString(it.first.as<std::string>());
+        const YAML::Node value = it.second;
+        if (!value.IsScalar()) {
+          continue;
+        }
+        const QString raw = QString::fromStdString(value.as<std::string>());
+        const QString lower = raw.toLower();
+        if (lower == "true" || lower == "false") {
+          gmsh_settings.insert(key, lower == "true");
+          continue;
+        }
+        bool ok_int = false;
+        int int_val = raw.toInt(&ok_int);
+        if (ok_int && !raw.contains('.')
+            && !raw.contains('e', Qt::CaseInsensitive)) {
+          gmsh_settings.insert(key, int_val);
+          continue;
+        }
+        bool ok_double = false;
+        double dbl_val = raw.toDouble(&ok_double);
+        if (ok_double) {
+          gmsh_settings.insert(key, dbl_val);
+          continue;
+        }
+        gmsh_settings.insert(key, raw);
+      }
+      gmsh_panel_->apply_gmsh_settings(gmsh_settings);
+    }
   } catch (const std::exception& e) {
     QMessageBox::warning(this, "Project Load",
                          QString("Failed to load: %1").arg(e.what()));
@@ -1336,6 +1372,28 @@ bool MainWindow::save_project(const QString& path) {
       model[root_item->text(0).toStdString()] = list;
     }
     root["model"] = model;
+    if (gmsh_panel_) {
+      YAML::Node gmsh_node(YAML::NodeType::Map);
+      const QVariantMap settings = gmsh_panel_->gmsh_settings();
+      for (auto it = settings.begin(); it != settings.end(); ++it) {
+        const QVariant& val = it.value();
+        switch (val.typeId()) {
+          case QMetaType::Bool:
+            gmsh_node[it.key().toStdString()] = val.toBool();
+            break;
+          case QMetaType::Int:
+            gmsh_node[it.key().toStdString()] = val.toInt();
+            break;
+          case QMetaType::Double:
+            gmsh_node[it.key().toStdString()] = val.toDouble();
+            break;
+          default:
+            gmsh_node[it.key().toStdString()] = val.toString().toStdString();
+            break;
+        }
+      }
+      root["gmsh"] = gmsh_node;
+    }
     std::ofstream out(path.toStdString());
     out << root;
     out.close();
