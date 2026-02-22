@@ -1235,9 +1235,20 @@ void GmshPanel::on_generate() {
       }
       boundary_names << QString::fromStdString(name);
     }
-    if (!boundary_names.isEmpty()) {
-      emit boundary_groups(boundary_names);
+    emit boundary_groups(boundary_names);
+
+    QStringList volume_names;
+    std::vector<std::pair<int, int>> vol_groups;
+    gmsh::model::getPhysicalGroups(vol_groups, dim);
+    for (const auto& g : vol_groups) {
+      std::string name;
+      gmsh::model::getPhysicalName(g.first, g.second, name);
+      if (name.empty()) {
+        name = "volume_" + std::to_string(g.second);
+      }
+      volume_names << QString::fromStdString(name);
     }
+    emit volume_groups(volume_names);
 
     std::vector<std::string> log;
     gmsh::logger::get(log);
@@ -2016,6 +2027,20 @@ void GmshPanel::update_physical_group_list() {
     boundary_names << QString::fromStdString(name);
   }
   emit boundary_groups(boundary_names);
+
+  QStringList volume_names;
+  std::vector<std::pair<int, int>> vol_groups;
+  const int volume_dim = std::max(0, infer_mesh_dim());
+  gmsh::model::getPhysicalGroups(vol_groups, volume_dim);
+  for (const auto& g : vol_groups) {
+    std::string name;
+    gmsh::model::getPhysicalName(g.first, g.second, name);
+    if (name.empty()) {
+      name = "volume_" + std::to_string(g.second);
+    }
+    volume_names << QString::fromStdString(name);
+  }
+  emit volume_groups(volume_names);
 
   update_physical_group_table();
 #else

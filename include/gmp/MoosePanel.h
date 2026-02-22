@@ -48,6 +48,8 @@ class MoosePanel : public QWidget {
   void run_job();
   void check_input();
   void stop_job();
+  QString log_text() const;
+  QString log_tail(int max_lines) const;
 
  private slots:
   void on_pick_exec();

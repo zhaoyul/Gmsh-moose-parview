@@ -37,6 +37,7 @@ class GmshPanel : public QWidget {
  signals:
   void mesh_written(const QString& path);
   void boundary_groups(const QStringList& names);
+  void volume_groups(const QStringList& names);
   void physical_group_selected(int dim, int tag);
 
  private slots:

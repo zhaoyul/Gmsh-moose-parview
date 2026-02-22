@@ -160,3 +160,73 @@
    - Viewer: Added pick highlight overlay and view controls (axes/outline/presets).
    - Viewer: Added entity pick/filter and view-to-Gmsh entity fill.
    - Project: Persisted MOOSE and Viewer settings into YAML for troubleshooting.
+   - UI: Added Model Tree action strip (Add/Duplicate/Rename/Remove).
+   - UI: Added project path + dirty status in title/status bar.
+   - UI: Added Recent Projects menu + Export Debug Bundle.
+
+* Next Development Plan (UI-First, Post-Gmsh)
+** Goal
+   - Make the app feel like a complete simulation suite with robust job control and results exploration.
+   - UI changes are explicit and prioritized.
+
+** Phase 1: Project + Session UX
+   - UI: Add project path + dirty indicator in window title and status bar.
+   - UI: Add File menu items: Recent Projects, Export Debug Bundle.
+   - UI: Add toolbar buttons: Save, Save As, Open Project.
+   - Data: Extend project metadata (version, saved_at, app_version).
+
+** Phase 2: Model Tree + Property Panel Revamp
+   - [X] UI: Add top action strip above Model Tree (Add, Duplicate, Remove, Rename).
+   - [X] UI: Inline rename and context menu per node type.
+   - [X] UI: Property panel header shows active item name, type, and status.
+   - [X] UI: Split Property panel into tabs (General, Parameters, Preview).
+   - [X] Data: Normalize params schema per node kind.
+
+** Phase 3: Physics Authoring (MOOSE Mapping)
+   - [~] UI: New forms for Materials, Sections, Steps, BC, Loads with validation.
+   - [X] UI: BC/Load panel shows physical groups with multi-select.
+   - [~] UI: Add “Apply to Group(s)” actions and summary chips.
+   - [X] Data: Deterministic block mapping from model tree to MOOSE input.
+
+** Phase 4: Job Manager
+   - [X] UI: Job list table (Name, Status, Start, Duration, Mesh, Exec, Result).
+   - [X] UI: Run controls (Run, Stop, Retry, Open Log, Open Result).
+   - [X] UI: Job detail drawer with full command, environment, and log tail.
+   - [X] Data: Persist job history and last run metadata in project.
+
+** Phase 5: Results + Visualization
+   - [X] UI: Dedicated Visualization module layout:
+     Viewport + Left panel (variables) + Right panel (display controls).
+   - [X] UI: Add tabs for Scalar, Vector, Deformation, Slice, Probe, Plot, Table.
+   - [X] UI: Add probe tool and selection readout (node/cell/value).
+   - [X] UI: Add vector stats/auto-sync and deformation linkage from array picker.
+   - [X] UI: Add plot/table result views with refresh, sorting-ready tabs and row controls.
+   - [X] Data: Save last used result variables and display settings.
+
+** Phase 6: Diagnostics + Supportability
+   - UI: Diagnostics tab with environment checks (gmsh/moose/paraview, VTK).
+   - UI: “Export Debug Bundle” dialog (project + mesh + logs + inputs).
+   - Data: Write diagnostics report into bundle.
+
+** Phase 7: Preferences + Cross-Platform
+   - UI: Preferences dialog (Paths, Runtime, Performance, UI).
+   - UI: Auto-detect paths, allow overrides, show status.
+   - Data: Persist user preferences separately from project.
+
+** Progress Update (2026-02-22)
+   - Model Tree: Context menu now aligns with action strip (Add/Duplicate/Rename/Remove).
+   - Property Panel: Added Status field and kept tabs for General/Parameters/Preview.
+   - Property Panel: Added BC/Load group selection + lightweight validation.
+   - Property Panel: Added quick-parameter forms for core physics nodes.
+   - Property Panel: Added type-aware visibility, stricter validation, and advanced param toggle.
+   - Property Panel: Added template presets + type template apply.
+   - Validation Summary: persistent side panel with node navigation.
+   - Visualization: Controls reorganized into tabs with placeholders for Vector/Deformation/Probe/Plot/Table.
+   - Visualization: Added left panel array list + filter.
+   - Visualization: Added probe tool (point/cell) with readout.
+   - Visualization: Added deformation controls + warp pipeline.
+   - Visualization: Persisted probe/deformation settings into project.
+   - Visualization: Added vector tab stats and auto-sync to deformation vector control.
+   - Visualization: Added plot/table data preview and adjustable row count, with persisted settings.
+   - VTK: Plot/Table/Vector panes now refresh automatically on time/array/file updates.
+   - Job Manager: Added job history table, controls, and detail panel.

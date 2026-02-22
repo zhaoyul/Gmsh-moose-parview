@@ -9,11 +9,14 @@ class QLabel;
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QPlainTextEdit;
 class QSlider;
 class QPushButton;
 class QTimer;
 class QSpinBox;
 class QFileSystemWatcher;
+class QListWidget;
+class QTableWidget;
 
 #ifdef GMP_ENABLE_VTK_VIEWER
 class QVTKOpenGLNativeWidget;
@@ -37,6 +40,7 @@ class vtkScalarBarActor;
 class vtkLookupTable;
 class vtkCellPicker;
 class vtkCallbackCommand;
+class vtkWarpVector;
 
 #include <vtkSmartPointer.h>
 #include <vector>
@@ -96,6 +100,12 @@ signals:
   void update_selection_pipeline();
   void update_scene_extras();
   void apply_view_preset(int preset);
+  void update_array_list();
+  void update_vector_list();
+  void update_deformation_pipeline();
+  void update_vector_tab();
+  void update_plot_view();
+  void update_table_view();
 
   QString current_file_;
   QLabel* file_label_ = nullptr;
@@ -144,6 +154,26 @@ signals:
   QLabel* output_label_ = nullptr;
   QComboBox* output_combo_ = nullptr;
   QPushButton* output_pick_ = nullptr;
+  QComboBox* array_filter_ = nullptr;
+  QListWidget* array_list_ = nullptr;
+  QCheckBox* probe_enable_ = nullptr;
+  QComboBox* probe_mode_ = nullptr;
+  QPushButton* probe_clear_ = nullptr;
+  QLabel* probe_info_ = nullptr;
+  QCheckBox* deform_enable_ = nullptr;
+  QComboBox* deform_vector_ = nullptr;
+  QDoubleSpinBox* deform_scale_ = nullptr;
+  QComboBox* vector_array_combo_ = nullptr;
+  QCheckBox* vector_auto_sync_deform_ = nullptr;
+  QPushButton* vector_apply_to_deform_ = nullptr;
+  QLabel* vector_info_ = nullptr;
+  QPlainTextEdit* plot_view_ = nullptr;
+  QPushButton* plot_refresh_btn_ = nullptr;
+  QLabel* plot_stats_ = nullptr;
+  QTableWidget* table_view_ = nullptr;
+  QSpinBox* table_rows_spin_ = nullptr;
+  QPushButton* table_refresh_btn_ = nullptr;
+  QLabel* table_stats_ = nullptr;
 
 #ifdef GMP_ENABLE_VTK_VIEWER
   QVTKOpenGLNativeWidget* vtk_widget_ = nullptr;
@@ -205,6 +235,7 @@ signals:
   vtkSmartPointer<vtkAxesActor> axes_actor_;
   vtkSmartPointer<vtkCellPicker> picker_;
   vtkSmartPointer<vtkCallbackCommand> pick_callback_;
+  vtkSmartPointer<vtkWarpVector> warp_filter_;
   bool first_render_ = true;
   bool pipeline_ready_ = false;
   bool actor_added_ = false;

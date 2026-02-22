@@ -10,6 +10,9 @@ class QTabBar;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QString;
+class QLabel;
+class QMenu;
+class QTableWidget;
 
 namespace gmp {
 
@@ -39,10 +42,24 @@ class MainWindow : public QMainWindow {
                                   const QVariantMap& params);
   void upsert_mesh_item(const QString& path);
   void upsert_result_item(const QString& path, const QString& job_name);
+  QVariantMap default_params_for_kind(const QString& kind) const;
+  QVariantMap normalize_params_for_kind(const QString& kind,
+                                        const QVariantMap& params) const;
   void add_item_under_root(QTreeWidgetItem* root);
   void remove_item(QTreeWidgetItem* item);
+  void duplicate_item(QTreeWidgetItem* item);
   void load_project(const QString& path);
   bool save_project(const QString& path);
+  void set_project_dirty(bool dirty);
+  void update_window_title();
+  void update_project_status();
+  void add_recent_project(const QString& path);
+  void update_recent_menu();
+  void export_debug_bundle();
+  void refresh_job_table();
+  int append_job_row(const QString& name, const QVariantMap& params);
+  void update_job_row(int row, const QString& name, const QVariantMap& params);
+  void update_job_detail(int row);
   QString build_block_from_root(QTreeWidgetItem* root,
                                 const QString& block_name,
                                 const QString& default_type,
@@ -60,15 +77,24 @@ class MainWindow : public QMainWindow {
   PropertyEditor* property_editor_ = nullptr;
   QPlainTextEdit* console_ = nullptr;
   VtkViewer* viewer_ = nullptr;
+  QTableWidget* job_table_ = nullptr;
+  QPlainTextEdit* job_detail_ = nullptr;
   QString project_path_;
+  bool project_dirty_ = false;
+  bool suppress_dirty_ = false;
+  QLabel* project_status_label_ = nullptr;
+  QLabel* dirty_status_label_ = nullptr;
   QTreeWidgetItem* active_job_item_ = nullptr;
+  int active_job_row_ = -1;
   MoosePanel* moose_panel_ = nullptr;
   GmshPanel* gmsh_panel_ = nullptr;
 
+  QMenu* recent_menu_ = nullptr;
   QAction* action_new_ = nullptr;
   QAction* action_open_ = nullptr;
   QAction* action_save_ = nullptr;
   QAction* action_save_as_ = nullptr;
+  QAction* action_export_bundle_ = nullptr;
   QAction* action_sync_ = nullptr;
   QAction* action_screenshot_ = nullptr;
   QAction* action_mesh_ = nullptr;

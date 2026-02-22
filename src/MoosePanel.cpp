@@ -278,6 +278,21 @@ void MoosePanel::stop_job() {
   on_stop();
 }
 
+QString MoosePanel::log_text() const {
+  return log_ ? log_->toPlainText() : QString();
+}
+
+QString MoosePanel::log_tail(int max_lines) const {
+  if (!log_) {
+    return QString();
+  }
+  QStringList lines = log_->toPlainText().split('\n');
+  if (max_lines > 0 && lines.size() > max_lines) {
+    lines = lines.mid(lines.size() - max_lines);
+  }
+  return lines.join("\n");
+}
+
 void MoosePanel::on_check_input() {
   run_task(true);
 }
@@ -573,6 +588,7 @@ void MoosePanel::run_task(bool check_only) {
   start_info.insert("exec", exec_path);
   start_info.insert("input", input_path);
   start_info.insert("workdir", spec.working_dir);
+  start_info.insert("mesh", mesh_path_ ? mesh_path_->text() : QString());
   start_info.insert("use_mpi", use_mpi_->isChecked());
   start_info.insert("mpi_ranks", mpi_ranks_->value());
   start_info.insert("check_only", check_only);

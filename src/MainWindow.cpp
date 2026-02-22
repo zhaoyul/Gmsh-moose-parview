@@ -1,6 +1,7 @@
 #include "gmp/MainWindow.h"
 
 #include <QFileDialog>
+#include <QFile>
 #include <QDir>
 #include <QInputDialog>
 #include <QLabel>
@@ -8,6 +9,10 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPushButton>
+#include <QDialog>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QStatusBar>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -15,6 +20,7 @@
 #include <QTabWidget>
 #include <QToolBar>
 #include <QTreeWidget>
+#include <QAbstractItemView>
 #include <QVBoxLayout>
 #include <QStyle>
 #include <QKeySequence>
@@ -25,6 +31,10 @@
 #include <QVariantMap>
 #include <QMetaType>
 #include <QSet>
+#include <QSettings>
+#include <QLabel>
+#include <QTextStream>
+#include <QDateTime>
 
 #include <fstream>
 #include <QFileInfo>
@@ -247,9 +257,30 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   main_split->setChildrenCollapsible(false);
   vertical_split->addWidget(main_split);
 
-  model_tree_ = new QTreeWidget(main_split);
+  auto* tree_panel = new QWidget(main_split);
+  auto* tree_layout = new QVBoxLayout(tree_panel);
+  tree_layout->setContentsMargins(0, 0, 0, 0);
+  tree_layout->setSpacing(4);
+  auto* tree_actions = new QHBoxLayout();
+  auto* add_btn = new QPushButton("Add");
+  auto* dup_btn = new QPushButton("Duplicate");
+  auto* rename_btn = new QPushButton("Rename");
+  auto* remove_btn = new QPushButton("Remove");
+  tree_actions->addWidget(add_btn);
+  tree_actions->addWidget(dup_btn);
+  tree_actions->addWidget(rename_btn);
+  tree_actions->addWidget(remove_btn);
+  tree_actions->addStretch(1);
+  auto* tree_actions_container = new QWidget(tree_panel);
+  tree_actions_container->setLayout(tree_actions);
+  tree_layout->addWidget(tree_actions_container);
+
+  model_tree_ = new QTreeWidget(tree_panel);
   model_tree_->setHeaderLabel("Model Tree");
   model_tree_->setMinimumWidth(220);
+  model_tree_->setEditTriggers(QAbstractItemView::SelectedClicked |
+                               QAbstractItemView::EditKeyPressed);
+  tree_layout->addWidget(model_tree_, 1);
   build_model_tree();
 
   auto* center_tabs = new QTabWidget(main_split);
@@ -269,9 +300,55 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   moose_panel_ = job_page;
   gmsh_panel_ = mesh_page;
 
+  auto* job_container = new QWidget(property_stack_);
+  auto* job_layout = new QVBoxLayout(job_container);
+  job_layout->setContentsMargins(0, 0, 0, 0);
+  job_layout->setSpacing(6);
+
+  auto* job_actions = new QHBoxLayout();
+  auto* job_run_btn = new QPushButton("Run");
+  auto* job_stop_btn = new QPushButton("Stop");
+  auto* job_retry_btn = new QPushButton("Retry");
+  auto* job_log_btn = new QPushButton("Open Log");
+  auto* job_result_btn = new QPushButton("Open Result");
+  job_actions->addWidget(job_run_btn);
+  job_actions->addWidget(job_stop_btn);
+  job_actions->addWidget(job_retry_btn);
+  job_actions->addWidget(job_log_btn);
+  job_actions->addWidget(job_result_btn);
+  job_actions->addStretch(1);
+  auto* job_actions_container = new QWidget(job_container);
+  job_actions_container->setLayout(job_actions);
+  job_layout->addWidget(job_actions_container);
+
+  auto* job_split = new QSplitter(Qt::Vertical, job_container);
+  job_split->setChildrenCollapsible(false);
+  auto* job_info_panel = new QWidget(job_split);
+  auto* job_info_layout = new QVBoxLayout(job_info_panel);
+  job_info_layout->setContentsMargins(0, 0, 0, 0);
+  job_table_ = new QTableWidget(job_info_panel);
+  job_table_->setColumnCount(7);
+  job_table_->setHorizontalHeaderLabels(
+      {"Name", "Status", "Start", "Duration", "Mesh", "Exec", "Result"});
+  job_table_->horizontalHeader()->setStretchLastSection(true);
+  job_table_->verticalHeader()->setVisible(false);
+  job_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  job_table_->setSelectionMode(QAbstractItemView::SingleSelection);
+  job_table_->setMinimumHeight(140);
+  job_info_layout->addWidget(job_table_);
+  job_detail_ = new QPlainTextEdit(job_info_panel);
+  job_detail_->setReadOnly(true);
+  job_detail_->setPlaceholderText("Select a job to view details.");
+  job_info_layout->addWidget(job_detail_);
+  job_split->addWidget(job_info_panel);
+  job_split->addWidget(job_page);
+  job_split->setStretchFactor(0, 0);
+  job_split->setStretchFactor(1, 1);
+  job_layout->addWidget(job_split, 1);
+
   property_stack_->addWidget(property_editor_);
   property_stack_->addWidget(mesh_page);
-  property_stack_->addWidget(job_page);
+  property_stack_->addWidget(job_container);
 
   console_ = new QPlainTextEdit(vertical_split);
   console_->setReadOnly(true);
@@ -301,6 +378,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
           &MoosePanel::set_mesh_path);
   connect(mesh_page, &GmshPanel::boundary_groups, job_page,
           &MoosePanel::set_boundary_groups);
+  connect(mesh_page, &GmshPanel::boundary_groups, property_editor_,
+          &PropertyEditor::set_boundary_groups);
+  connect(mesh_page, &GmshPanel::volume_groups, property_editor_,
+          &PropertyEditor::set_volume_groups);
   connect(mesh_page, &GmshPanel::mesh_written, viewer_,
           &VtkViewer::set_mesh_file);
   connect(mesh_page, &GmshPanel::physical_group_selected, viewer_,
@@ -332,6 +413,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     : base;
             active_job_item_ = add_child_item(root, name, "Jobs", info);
             statusBar()->showMessage("Job running...", 2000);
+            QVariantMap params = info;
+            params.insert("status", "Running");
+            params.insert("start_time",
+                          QDateTime::currentDateTime().toString(Qt::ISODate));
+            active_job_item_->setData(0, PropertyEditor::kParamsRole, params);
+            active_job_row_ = append_job_row(name, params);
           });
   connect(job_page, &MoosePanel::job_finished, this,
           [this](const QVariantMap& info) {
@@ -343,23 +430,137 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             for (auto it = info.begin(); it != info.end(); ++it) {
               params.insert(it.key(), it.value());
             }
+            const QString status = info.value("status").toString() == "Normal"
+                                       ? "Completed"
+                                       : "Failed";
+            params.insert("status", status);
+            const QString start = params.value("start_time").toString();
+            if (!start.isEmpty()) {
+              const QDateTime start_dt =
+                  QDateTime::fromString(start, Qt::ISODate);
+              if (start_dt.isValid()) {
+                const qint64 seconds = start_dt.secsTo(
+                    QDateTime::currentDateTime());
+                params.insert("duration", QString::number(seconds) + "s");
+              }
+            }
             active_job_item_->setData(0, PropertyEditor::kParamsRole, params);
             const QString exodus = info.value("exodus").toString();
             if (!exodus.isEmpty()) {
               upsert_result_item(exodus, active_job_item_->text(0));
             }
+            if (active_job_row_ >= 0) {
+              update_job_row(active_job_row_, active_job_item_->text(0), params);
+              update_job_detail(active_job_row_);
+            }
             active_job_item_ = nullptr;
+            active_job_row_ = -1;
             statusBar()->showMessage("Job finished.", 2000);
           });
   connect(job_page, &MoosePanel::exodus_ready, this,
           [this](const QString& path) { upsert_result_item(path, ""); });
 
+  connect(job_run_btn, &QPushButton::clicked, this, [this]() {
+    if (moose_panel_) {
+      moose_panel_->run_job();
+    }
+  });
+  connect(job_stop_btn, &QPushButton::clicked, this, [this]() {
+    if (moose_panel_) {
+      moose_panel_->stop_job();
+    }
+  });
+  connect(job_retry_btn, &QPushButton::clicked, this, [this]() {
+    if (moose_panel_) {
+      moose_panel_->run_job();
+    }
+  });
+  connect(job_result_btn, &QPushButton::clicked, this, [this]() {
+    if (!job_table_ || !viewer_) {
+      return;
+    }
+    const int row = job_table_->currentRow();
+    if (row < 0) {
+      return;
+    }
+    auto* item = job_table_->item(row, 0);
+    if (!item) {
+      return;
+    }
+    const QVariantMap params = item->data(Qt::UserRole).toMap();
+    const QString result = params.value("exodus").toString();
+    if (!result.isEmpty()) {
+      viewer_->set_exodus_file(result);
+      statusBar()->showMessage("Result loaded.", 2000);
+    }
+  });
+  connect(job_log_btn, &QPushButton::clicked, this, [this]() {
+    if (!moose_panel_) {
+      return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle("Job Log");
+    dialog.resize(800, 500);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* log_view = new QPlainTextEdit(&dialog);
+    log_view->setReadOnly(true);
+    log_view->setPlainText(moose_panel_->log_text());
+    layout->addWidget(log_view);
+    dialog.exec();
+  });
+  connect(job_table_, &QTableWidget::currentCellChanged, this,
+          [this](int row, int, int, int) { update_job_detail(row); });
+
   connect(model_tree_, &QTreeWidget::itemSelectionChanged, this, [this]() {
     auto* item = model_tree_->currentItem();
     property_editor_->set_item(item);
   });
+  connect(model_tree_, &QTreeWidget::itemChanged, this,
+          [this](QTreeWidgetItem* item, int) {
+            if (suppress_dirty_) {
+              return;
+            }
+            if (!item || !item->parent()) {
+              return;
+            }
+            set_project_dirty(true);
+            if (property_editor_) {
+              property_editor_->refresh_form_options();
+            }
+          });
+
+  connect(add_btn, &QPushButton::clicked, this, [this]() {
+    auto* item = model_tree_->currentItem();
+    if (item && !item->parent()) {
+      add_item_under_root(item);
+      return;
+    }
+    if (item && item->parent()) {
+      add_item_under_root(item->parent());
+      return;
+    }
+  });
+  connect(remove_btn, &QPushButton::clicked, this, [this]() {
+    remove_item(model_tree_->currentItem());
+  });
+  connect(rename_btn, &QPushButton::clicked, this, [this]() {
+    auto* item = model_tree_->currentItem();
+    if (!item || !item->parent()) {
+      return;
+    }
+    model_tree_->editItem(item, 0);
+  });
+  connect(dup_btn, &QPushButton::clicked, this, [this]() {
+    auto* item = model_tree_->currentItem();
+    duplicate_item(item);
+  });
 
   setCentralWidget(central);
+  project_status_label_ = new QLabel("Project: Untitled");
+  dirty_status_label_ = new QLabel("Saved");
+  statusBar()->addPermanentWidget(project_status_label_);
+  statusBar()->addPermanentWidget(dirty_status_label_);
+  update_window_title();
   statusBar()->showMessage("Ready");
 }
 
@@ -369,6 +570,8 @@ void MainWindow::build_menu() {
   action_open_ = file_menu->addAction("Open Project...");
   action_save_ = file_menu->addAction("Save Project");
   action_save_as_ = file_menu->addAction("Save Project As...");
+  recent_menu_ = file_menu->addMenu("Recent Projects");
+  action_export_bundle_ = file_menu->addAction("Export Debug Bundle...");
   action_screenshot_ = file_menu->addAction("Save Screenshot...");
   action_new_->setShortcut(QKeySequence::New);
   action_open_->setShortcut(QKeySequence::Open);
@@ -410,9 +613,12 @@ void MainWindow::build_menu() {
   connect(action_new_, &QAction::triggered, this, [this]() {
     project_path_.clear();
     clear_model_tree_children();
+    refresh_job_table();
     property_editor_->set_item(nullptr);
     console_->appendPlainText("New project created.");
     statusBar()->showMessage("New project created.", 2000);
+    set_project_dirty(false);
+    update_project_status();
   });
   connect(action_open_, &QAction::triggered, this, [this]() {
     const QString path = QFileDialog::getOpenFileName(
@@ -433,10 +639,13 @@ void MainWindow::build_menu() {
         return;
       }
       project_path_ = path;
+      update_project_status();
     }
     if (save_project(project_path_)) {
       console_->appendPlainText("Project saved: " + project_path_);
       statusBar()->showMessage("Project saved.", 2000);
+      add_recent_project(project_path_);
+      set_project_dirty(false);
     }
   });
   connect(action_save_as_, &QAction::triggered, this, [this]() {
@@ -450,8 +659,15 @@ void MainWindow::build_menu() {
     if (save_project(project_path_)) {
       console_->appendPlainText("Project saved: " + project_path_);
       statusBar()->showMessage("Project saved.", 2000);
+      add_recent_project(project_path_);
+      set_project_dirty(false);
+      update_project_status();
     }
   });
+  if (action_export_bundle_) {
+    connect(action_export_bundle_, &QAction::triggered, this,
+            &MainWindow::export_debug_bundle);
+  }
   connect(action_screenshot_, &QAction::triggered, this, [this]() {
     const QString path = QFileDialog::getSaveFileName(
         this, "Save Screenshot", QDir::homePath(),
@@ -519,6 +735,8 @@ void MainWindow::build_menu() {
           [this]() { load_demo_nonlinear_heat(false); });
   connect(demo_run_nl, &QAction::triggered, this,
           [this]() { load_demo_nonlinear_heat(true); });
+
+  update_recent_menu();
 }
 
 void MainWindow::build_toolbar() {
@@ -537,6 +755,10 @@ void MainWindow::build_toolbar() {
   if (action_save_) {
     action_save_->setIcon(MakeIcon(IconGlyph::SaveDisk));
     toolbar->addAction(action_save_);
+  }
+  if (action_save_as_) {
+    action_save_as_->setIcon(MakeIcon(IconGlyph::SaveDisk));
+    toolbar->addAction(action_save_as_);
   }
   if (action_screenshot_) {
     action_screenshot_->setIcon(MakeIcon(IconGlyph::Output));
@@ -666,6 +888,7 @@ void MainWindow::build_model_tree() {
     item->setText(0, name);
     item->setExpanded(true);
     item->setData(0, PropertyEditor::kKindRole, name);
+    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     QIcon icon;
     if (name == "Parts") {
       icon = MakeIcon(IconGlyph::Part);
@@ -713,15 +936,19 @@ void MainWindow::build_model_tree() {
               connect(add_action, &QAction::triggered, this,
                       [this, item]() { add_item_under_root(item); });
             } else {
+              auto* add_action = menu.addAction("Add");
+              auto* duplicate_action = menu.addAction("Duplicate");
               auto* rename_action = menu.addAction("Rename");
-              auto* delete_action = menu.addAction("Delete");
-              connect(rename_action, &QAction::triggered, this, [this, item]() {
-                const QString name = QInputDialog::getText(
-                    this, "Rename Item", "Name:", QLineEdit::Normal,
-                    item->text(0));
-                if (!name.isEmpty()) {
-                  item->setText(0, name);
+              auto* delete_action = menu.addAction("Remove");
+              connect(add_action, &QAction::triggered, this, [this, item]() {
+                if (item->parent()) {
+                  add_item_under_root(item->parent());
                 }
+              });
+              connect(duplicate_action, &QAction::triggered, this,
+                      [this, item]() { duplicate_item(item); });
+              connect(rename_action, &QAction::triggered, this, [this, item]() {
+                model_tree_->editItem(item, 0);
               });
               connect(delete_action, &QAction::triggered, this,
                       [this, item]() { remove_item(item); });
@@ -777,10 +1004,11 @@ QTreeWidgetItem* MainWindow::add_child_item(QTreeWidgetItem* root,
   if (!root) {
     return nullptr;
   }
+  const QVariantMap normalized = normalize_params_for_kind(kind, params);
   auto* item = new QTreeWidgetItem(root);
   item->setText(0, name);
   item->setData(0, PropertyEditor::kKindRole, kind);
-  item->setData(0, PropertyEditor::kParamsRole, params);
+  item->setData(0, PropertyEditor::kParamsRole, normalized);
   root->setExpanded(true);
   model_tree_->setCurrentItem(item);
   return item;
@@ -807,6 +1035,7 @@ void MainWindow::upsert_mesh_item(const QString& path) {
     item->setText(0, name);
     item->setData(0, PropertyEditor::kParamsRole, params);
   }
+  set_project_dirty(true);
 }
 
 void MainWindow::upsert_result_item(const QString& path,
@@ -833,6 +1062,63 @@ void MainWindow::upsert_result_item(const QString& path,
     item->setText(0, name);
     item->setData(0, PropertyEditor::kParamsRole, params);
   }
+  set_project_dirty(true);
+}
+
+QVariantMap MainWindow::default_params_for_kind(const QString& kind) const {
+  if (kind == "Functions") {
+    return {{"type", "ParsedFunction"}, {"expression", "1.0"}};
+  }
+  if (kind == "Variables") {
+    return {{"order", "FIRST"}, {"family", "LAGRANGE"}};
+  }
+  if (kind == "Materials") {
+    return {{"type", "GenericConstantMaterial"},
+            {"prop_names", "prop"},
+            {"prop_values", "1.0"}};
+  }
+  if (kind == "BC") {
+    return {{"type", "DirichletBC"},
+            {"variable", "u"},
+            {"boundary", "left"},
+            {"value", "0"}};
+  }
+  if (kind == "Loads") {
+    return {{"type", "BodyForce"}, {"variable", "u"}, {"value", "0"}};
+  }
+  if (kind == "Outputs") {
+    return {{"type", "Exodus"}, {"exodus", "true"}};
+  }
+  if (kind == "Steps") {
+    return {{"type", "Transient"}, {"dt", "0.1"}, {"end_time", "1.0"}};
+  }
+  if (kind == "Sections") {
+    return {{"type", "SolidSection"}, {"material", "material_1"}};
+  }
+  if (kind == "Parts") {
+    return {{"type", "Part"}, {"description", ""}};
+  }
+  if (kind == "Interactions") {
+    return {{"type", "Interaction"}};
+  }
+  if (kind == "Mesh") {
+    return {{"status", "New"}};
+  }
+  if (kind == "Jobs") {
+    return {{"status", "Idle"}};
+  }
+  if (kind == "Results") {
+    return {{"status", "Ready"}};
+  }
+  return {};
+}
+
+QVariantMap MainWindow::normalize_params_for_kind(
+    const QString& kind, const QVariantMap& params) const {
+  if (!params.isEmpty()) {
+    return params;
+  }
+  return default_params_for_kind(kind);
 }
 
 QString MainWindow::build_block_from_root(QTreeWidgetItem* root,
@@ -1248,9 +1534,14 @@ void MainWindow::add_item_under_root(QTreeWidgetItem* root) {
   auto* item = new QTreeWidgetItem(root);
   item->setText(0, name);
   item->setData(0, PropertyEditor::kKindRole, kind);
-  item->setData(0, PropertyEditor::kParamsRole, QVariantMap());
+  item->setData(0, PropertyEditor::kParamsRole,
+                default_params_for_kind(kind));
   root->setExpanded(true);
   model_tree_->setCurrentItem(item);
+  set_project_dirty(true);
+  if (property_editor_) {
+    property_editor_->refresh_form_options();
+  }
 }
 
 void MainWindow::remove_item(QTreeWidgetItem* item) {
@@ -1260,10 +1551,130 @@ void MainWindow::remove_item(QTreeWidgetItem* item) {
   auto* parent = item->parent();
   parent->removeChild(item);
   delete item;
+  set_project_dirty(true);
+  if (property_editor_) {
+    property_editor_->refresh_form_options();
+  }
+}
+
+void MainWindow::duplicate_item(QTreeWidgetItem* item) {
+  if (!item || !item->parent()) {
+    return;
+  }
+  auto* parent = item->parent();
+  if (!parent) {
+    return;
+  }
+  const QString base = item->text(0) + "_copy";
+  auto* child = new QTreeWidgetItem(parent);
+  child->setText(0, base);
+  child->setData(0, PropertyEditor::kKindRole,
+                 item->data(0, PropertyEditor::kKindRole));
+  child->setData(0, PropertyEditor::kParamsRole,
+                 item->data(0, PropertyEditor::kParamsRole));
+  parent->setExpanded(true);
+  model_tree_->setCurrentItem(child);
+  set_project_dirty(true);
+  if (property_editor_) {
+    property_editor_->refresh_form_options();
+  }
+}
+
+void MainWindow::refresh_job_table() {
+  if (!job_table_) {
+    return;
+  }
+  job_table_->setRowCount(0);
+  if (job_detail_) {
+    job_detail_->clear();
+  }
+  auto* root = find_root_item("Jobs");
+  if (!root) {
+    return;
+  }
+  for (int i = 0; i < root->childCount(); ++i) {
+    auto* child = root->child(i);
+    if (!child) {
+      continue;
+    }
+    const QVariantMap params =
+        child->data(0, PropertyEditor::kParamsRole).toMap();
+    append_job_row(child->text(0), params);
+  }
+}
+
+int MainWindow::append_job_row(const QString& name, const QVariantMap& params) {
+  if (!job_table_) {
+    return -1;
+  }
+  const int row = job_table_->rowCount();
+  job_table_->insertRow(row);
+  update_job_row(row, name, params);
+  return row;
+}
+
+void MainWindow::update_job_row(int row, const QString& name,
+                                const QVariantMap& params) {
+  if (!job_table_ || row < 0 || row >= job_table_->rowCount()) {
+    return;
+  }
+  auto set_item = [this, row](int col, const QString& text) {
+    QTableWidgetItem* item = job_table_->item(row, col);
+    if (!item) {
+      item = new QTableWidgetItem();
+      job_table_->setItem(row, col, item);
+    }
+    item->setText(text);
+  };
+  set_item(0, name);
+  set_item(1, params.value("status").toString());
+  set_item(2, params.value("start_time").toString());
+  set_item(3, params.value("duration").toString());
+  set_item(4, params.value("mesh").toString());
+  set_item(5, params.value("exec").toString());
+  set_item(6, params.value("exodus").toString());
+  if (auto* item = job_table_->item(row, 0)) {
+    item->setData(Qt::UserRole, params);
+  }
+}
+
+void MainWindow::update_job_detail(int row) {
+  if (!job_detail_) {
+    return;
+  }
+  if (!job_table_ || row < 0 || row >= job_table_->rowCount()) {
+    job_detail_->clear();
+    return;
+  }
+  auto* item = job_table_->item(row, 0);
+  if (!item) {
+    job_detail_->clear();
+    return;
+  }
+  const QVariantMap params = item->data(Qt::UserRole).toMap();
+  QStringList lines;
+  lines << QString("Name: %1").arg(item->text());
+  lines << QString("Status: %1").arg(params.value("status").toString());
+  lines << QString("Start: %1").arg(params.value("start_time").toString());
+  lines << QString("Duration: %1").arg(params.value("duration").toString());
+  lines << QString("Mesh: %1").arg(params.value("mesh").toString());
+  lines << QString("Exec: %1").arg(params.value("exec").toString());
+  lines << QString("Args: %1").arg(params.value("args").toString());
+  lines << QString("Workdir: %1").arg(params.value("workdir").toString());
+  lines << QString("Result: %1").arg(params.value("exodus").toString());
+  lines << QString("Exit: %1").arg(params.value("exit_code").toString());
+  if (moose_panel_) {
+    const QString tail = moose_panel_->log_tail(30);
+    if (!tail.isEmpty()) {
+      lines << "" << "Log (latest)" << tail;
+    }
+  }
+  job_detail_->setPlainText(lines.join("\n"));
 }
 
 void MainWindow::load_project(const QString& path) {
   try {
+    suppress_dirty_ = true;
     YAML::Node root = YAML::LoadFile(path.toStdString());
     auto parse_map = [](const YAML::Node& node,
                         const QSet<QString>& force_string) {
@@ -1306,6 +1717,7 @@ void MainWindow::load_project(const QString& path) {
     };
     YAML::Node model = root["model"];
     if (!model || !model.IsMap()) {
+      suppress_dirty_ = false;
       QMessageBox::warning(this, "Project Load",
                            "Invalid project file (missing model).");
       return;
@@ -1341,7 +1753,8 @@ void MainWindow::load_project(const QString& path) {
             params.insert(key, value);
           }
         }
-        child->setData(0, PropertyEditor::kParamsRole, params);
+        child->setData(0, PropertyEditor::kParamsRole,
+                       normalize_params_for_kind(kind, params));
       }
     }
     project_path_ = path;
@@ -1368,7 +1781,13 @@ void MainWindow::load_project(const QString& path) {
       const QVariantMap viewer_settings = parse_map(viewer_node, force_string);
       viewer_->apply_viewer_settings(viewer_settings);
     }
+    suppress_dirty_ = false;
+    refresh_job_table();
+    add_recent_project(path);
+    set_project_dirty(false);
+    update_project_status();
   } catch (const std::exception& e) {
+    suppress_dirty_ = false;
     QMessageBox::warning(this, "Project Load",
                          QString("Failed to load: %1").arg(e.what()));
   }
@@ -1485,6 +1904,149 @@ bool MainWindow::save_project(const QString& path) {
                          QString("Failed to save: %1").arg(e.what()));
   }
   return false;
+}
+
+void MainWindow::set_project_dirty(bool dirty) {
+  if (project_dirty_ == dirty) {
+    return;
+  }
+  project_dirty_ = dirty;
+  update_window_title();
+  update_project_status();
+}
+
+void MainWindow::update_window_title() {
+  const QString name = project_path_.isEmpty()
+                           ? "Untitled"
+                           : QFileInfo(project_path_).fileName();
+  const QString dirty_mark = project_dirty_ ? " *" : "";
+  setWindowTitle(QString("GMP-ISE - %1%2").arg(name, dirty_mark));
+}
+
+void MainWindow::update_project_status() {
+  if (project_status_label_) {
+    const QString label = project_path_.isEmpty()
+                              ? "Project: Untitled"
+                              : QString("Project: %1").arg(project_path_);
+    project_status_label_->setText(label);
+  }
+  if (dirty_status_label_) {
+    dirty_status_label_->setText(project_dirty_ ? "Modified" : "Saved");
+  }
+}
+
+void MainWindow::add_recent_project(const QString& path) {
+  if (path.isEmpty()) {
+    return;
+  }
+  QSettings settings("gmp-ise", "gmp_ise");
+  QStringList list = settings.value("recent_projects").toStringList();
+  list.removeAll(path);
+  list.prepend(path);
+  const int max_items = 10;
+  while (list.size() > max_items) {
+    list.removeLast();
+  }
+  settings.setValue("recent_projects", list);
+  update_recent_menu();
+}
+
+void MainWindow::update_recent_menu() {
+  if (!recent_menu_) {
+    return;
+  }
+  recent_menu_->clear();
+  QSettings settings("gmp-ise", "gmp_ise");
+  const QStringList list = settings.value("recent_projects").toStringList();
+  if (list.isEmpty()) {
+    auto* empty = recent_menu_->addAction("(None)");
+    empty->setEnabled(false);
+    return;
+  }
+  for (const auto& path : list) {
+    auto* action = recent_menu_->addAction(path);
+    connect(action, &QAction::triggered, this, [this, path]() {
+      if (path.isEmpty()) {
+        return;
+      }
+      load_project(path);
+      statusBar()->showMessage("Project loaded.", 2000);
+    });
+  }
+  recent_menu_->addSeparator();
+  auto* clear = recent_menu_->addAction("Clear Recent");
+  connect(clear, &QAction::triggered, this, [this]() {
+    QSettings settings("gmp-ise", "gmp_ise");
+    settings.remove("recent_projects");
+    update_recent_menu();
+  });
+}
+
+void MainWindow::export_debug_bundle() {
+  const QString base_dir =
+      QFileDialog::getExistingDirectory(this, "Export Debug Bundle",
+                                        QDir::homePath());
+  if (base_dir.isEmpty()) {
+    return;
+  }
+  const QString stamp =
+      QDateTime::currentDateTimeUtc().toString("yyyyMMdd_HHmmss");
+  const QString bundle_dir = QDir(base_dir).filePath("gmp_debug_" + stamp);
+  QDir dir(bundle_dir);
+  if (!dir.mkpath(".")) {
+    QMessageBox::warning(this, "Export Debug Bundle",
+                         "Failed to create bundle directory.");
+    return;
+  }
+
+  const QString project_file = dir.filePath("project.gmp.yaml");
+  save_project(project_file);
+
+  if (console_) {
+    QFile log_file(dir.filePath("console.log"));
+    if (log_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      log_file.write(console_->toPlainText().toUtf8());
+    }
+  }
+
+  if (moose_panel_) {
+    const QVariantMap settings = moose_panel_->moose_settings();
+    const QString input_text = settings.value("input_text").toString();
+    if (!input_text.isEmpty()) {
+      QFile input_file(dir.filePath("moose_input.i"));
+      if (input_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        input_file.write(input_text.toUtf8());
+      }
+    }
+  }
+
+  if (gmsh_panel_) {
+    const QVariantMap settings = gmsh_panel_->gmsh_settings();
+    const QString mesh_path = settings.value("output_path").toString();
+    if (!mesh_path.isEmpty() && QFileInfo::exists(mesh_path)) {
+      QFile::copy(mesh_path, dir.filePath(QFileInfo(mesh_path).fileName()));
+    }
+  }
+
+  if (viewer_) {
+    const QVariantMap settings = viewer_->viewer_settings();
+    const QString file_path = settings.value("current_file").toString();
+    if (!file_path.isEmpty() && QFileInfo::exists(file_path)) {
+      QFile::copy(file_path, dir.filePath(QFileInfo(file_path).fileName()));
+    }
+  }
+
+  QFile info_file(dir.filePath("bundle_info.txt"));
+  if (info_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    QTextStream out(&info_file);
+    out << "Bundle created: "
+        << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << "\n";
+    out << "Project path: " << project_path_ << "\n";
+  }
+
+  statusBar()->showMessage("Debug bundle exported.", 3000);
+  QMessageBox::information(this, "Export Debug Bundle",
+                           "Bundle created at:\n" + bundle_dir);
 }
 
 }  // namespace gmp
