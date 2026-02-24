@@ -64,12 +64,18 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   scroll->setWidgetResizable(true);
   auto* content = new QWidget();
   auto* content_layout = new QVBoxLayout(content);
-  auto register_entity_input = [this](QLineEdit* edit) {
+  auto bind_entity_input_validation = [this](QLineEdit* edit, QComboBox* dim_combo,
+                                            bool occ_only) {
     if (!edit) {
       return;
     }
     entity_inputs_.insert(edit);
     edit->installEventFilter(this);
+    connect(edit, &QLineEdit::textChanged, this,
+            [this, edit, dim_combo, occ_only]() {
+              const int dim = dim_combo ? dim_combo->currentData().toInt() : -1;
+              validate_entity_input(edit, dim, occ_only);
+            });
   };
   auto tune_dim_combo = [](QComboBox* combo) {
     tune_gmsh_combo(combo, 70, 120);
@@ -235,15 +241,37 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
         pick_entities_dialog(dim, "Select Transform Entities",
                              transform_ids_->text()));
   });
-  register_entity_input(transform_ids_);
+  bind_entity_input_validation(transform_ids_, transform_dim_, true);
   sel_row->addWidget(new QLabel("Dim"));
   sel_row->addWidget(transform_dim_);
   sel_row->addWidget(new QLabel("IDs"));
   sel_row->addWidget(transform_ids_, 1);
+  transform_template_ = new QComboBox();
+  transform_template_->setEditable(true);
+  transform_template_->addItem("Templates");
+  tune_gmsh_combo(transform_template_, 110, 160);
+  sel_row->addWidget(new QLabel("Template"));
+  sel_row->addWidget(transform_template_);
   sel_row->addWidget(transform_pick);
   auto* sel_container = new QWidget();
   sel_container->setLayout(sel_row);
   xform_form->addRow("Selection", sel_container);
+  populate_transform_entity_templates(-1);
+  connect(transform_dim_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this]() {
+            const int dim = transform_dim_->currentData().toInt();
+            populate_transform_entity_templates(dim);
+            validate_entity_input(transform_ids_, dim, true);
+          });
+  connect(transform_template_, QOverload<int>::of(&QComboBox::activated), this,
+          [this](int index) {
+            if (!transform_template_ || index <= 0 || !transform_ids_) {
+              return;
+            }
+            append_entity_template(transform_ids_,
+                                  transform_template_->itemText(index));
+            transform_template_->setCurrentIndex(0);
+          });
 
   auto* trans_row = new QHBoxLayout();
   trans_dx_ = new QDoubleSpinBox();
@@ -387,15 +415,55 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   });
   bool_row->addWidget(new QLabel("Obj"));
   bool_row->addWidget(boolean_obj_ids_, 1);
-  register_entity_input(boolean_obj_ids_);
+  bind_entity_input_validation(boolean_obj_ids_, boolean_dim_, true);
+  boolean_obj_template_ = new QComboBox();
+  boolean_obj_template_->setEditable(true);
+  boolean_obj_template_->addItem("Templates");
+  tune_gmsh_combo(boolean_obj_template_, 110, 160);
+  bool_row->addWidget(new QLabel("Template"));
+  bool_row->addWidget(boolean_obj_template_);
   bool_row->addWidget(boolean_obj_pick);
   bool_row->addWidget(new QLabel("Tool"));
   bool_row->addWidget(boolean_tool_ids_, 1);
-  register_entity_input(boolean_tool_ids_);
+  bind_entity_input_validation(boolean_tool_ids_, boolean_dim_, true);
+  boolean_tool_template_ = new QComboBox();
+  boolean_tool_template_->setEditable(true);
+  boolean_tool_template_->addItem("Templates");
+  tune_gmsh_combo(boolean_tool_template_, 110, 160);
+  bool_row->addWidget(new QLabel("Template"));
+  bool_row->addWidget(boolean_tool_template_);
   bool_row->addWidget(boolean_tool_pick);
   auto* bool_container = new QWidget();
   bool_container->setLayout(bool_row);
   bool_form->addRow("Selection", bool_container);
+  connect(boolean_dim_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this]() {
+            const int dim = boolean_dim_->currentData().toInt();
+            populate_boolean_entity_templates(dim);
+            validate_entity_input(boolean_obj_ids_, dim, true);
+            validate_entity_input(boolean_tool_ids_, dim, true);
+          });
+  connect(boolean_obj_template_,
+          QOverload<int>::of(&QComboBox::activated), this,
+          [this](int index) {
+            if (!boolean_obj_template_ || index <= 0 || !boolean_obj_ids_) {
+              return;
+            }
+            append_entity_template(boolean_obj_ids_,
+                                  boolean_obj_template_->itemText(index));
+            boolean_obj_template_->setCurrentIndex(0);
+          });
+  connect(boolean_tool_template_,
+          QOverload<int>::of(&QComboBox::activated), this,
+          [this](int index) {
+            if (!boolean_tool_template_ || index <= 0 || !boolean_tool_ids_) {
+              return;
+            }
+            append_entity_template(boolean_tool_ids_,
+                                  boolean_tool_template_->itemText(index));
+            boolean_tool_template_->setCurrentIndex(0);
+          });
+  populate_boolean_entity_templates(3);
 
   auto* bool_opts = new QHBoxLayout();
   boolean_remove_obj_ = new QCheckBox("Remove Object");
@@ -451,6 +519,13 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   phys_group_dim_->addItem("2", 2);
   phys_group_dim_->addItem("3", 3);
   tune_dim_combo(phys_group_dim_);
+  connect(phys_group_dim_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this]() {
+            validate_entity_input(phys_group_entities_,
+                                 phys_group_dim_ ? phys_group_dim_->currentData().toInt()
+                                                : -1,
+                                 false);
+          });
   phys_group_name_ = new QLineEdit();
   phys_group_name_->setPlaceholderText("Name");
   phys_row->addWidget(new QLabel("Dim"));
@@ -474,7 +549,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   });
   phys_entities_row->addWidget(phys_group_entities_, 1);
   phys_entities_row->addWidget(phys_entities_pick);
-  register_entity_input(phys_group_entities_);
+  bind_entity_input_validation(phys_group_entities_, phys_group_dim_, false);
   auto* phys_entities_container = new QWidget();
   phys_entities_container->setLayout(phys_entities_row);
   phys_form->addRow("Entities", phys_entities_container);
@@ -534,6 +609,13 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   field_dim_->addItem("2", 2);
   field_dim_->addItem("3", 3);
   tune_dim_combo(field_dim_);
+  connect(field_dim_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this]() {
+            validate_entity_input(field_entities_,
+                                 field_dim_ ? field_dim_->currentData().toInt()
+                                            : -1,
+                                 false);
+          });
   field_entities_ = new QLineEdit();
   field_entities_->setPlaceholderText("Entity IDs or dim:tag list");
   auto* field_entities_pick = new QPushButton("Pick");
@@ -549,7 +631,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   field_sel->addWidget(new QLabel("Entities"));
   field_sel->addWidget(field_entities_, 1);
   field_sel->addWidget(field_entities_pick);
-  register_entity_input(field_entities_);
+  bind_entity_input_validation(field_entities_, field_dim_, false);
   auto* field_sel_container = new QWidget();
   field_sel_container->setLayout(field_sel);
   field_form->addRow("Targets", field_sel_container);
@@ -614,6 +696,13 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   mesh_size_->setSingleStep(0.05);
   mesh_form->addRow("Mesh Size", mesh_size_);
 
+  mesh_dim_ = new QComboBox();
+  mesh_dim_->addItem("Auto", -1);
+  mesh_dim_->addItem("1D", 1);
+  mesh_dim_->addItem("2D", 2);
+  mesh_dim_->addItem("3D", 3);
+  mesh_form->addRow("Generate Dim", mesh_dim_);
+
   auto* entity_size_row = new QHBoxLayout();
   entity_size_dim_ = new QComboBox();
   entity_size_dim_->addItem("0", 0);
@@ -621,6 +710,14 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   entity_size_dim_->addItem("2", 2);
   entity_size_dim_->addItem("3", 3);
   tune_dim_combo(entity_size_dim_);
+  connect(entity_size_dim_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this]() {
+            validate_entity_input(entity_size_ids_,
+                                 entity_size_dim_
+                                     ? entity_size_dim_->currentData().toInt()
+                                     : -1,
+                                 false);
+          });
   entity_size_ids_ = new QLineEdit();
   entity_size_ids_->setPlaceholderText("IDs or dim:tag list");
   entity_size_value_ = new QDoubleSpinBox();
@@ -645,7 +742,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   entity_size_row->addWidget(new QLabel("IDs"));
   entity_size_row->addWidget(entity_size_ids_, 1);
   entity_size_row->addWidget(entity_size_pick);
-  register_entity_input(entity_size_ids_);
+  bind_entity_input_validation(entity_size_ids_, entity_size_dim_, false);
   entity_size_row->addWidget(new QLabel("Size"));
   entity_size_row->addWidget(entity_size_value_);
   entity_size_row->addWidget(entity_size_apply_);
@@ -728,7 +825,35 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
 
   auto* generate_btn = new QPushButton("Generate Mesh");
   connect(generate_btn, &QPushButton::clicked, this, &GmshPanel::on_generate);
-  content_layout->addWidget(generate_btn);
+
+  auto* generate_2d_btn = new QPushButton("Generate 2D Mesh");
+  auto* generate_3d_btn = new QPushButton("Generate 3D Mesh");
+  connect(generate_2d_btn, &QPushButton::clicked, this, [this]() {
+    if (mesh_dim_) {
+      const int idx = mesh_dim_->findData(2);
+      if (idx >= 0) {
+        mesh_dim_->setCurrentIndex(idx);
+      }
+    }
+    on_generate();
+  });
+  connect(generate_3d_btn, &QPushButton::clicked, this, [this]() {
+    if (mesh_dim_) {
+      const int idx = mesh_dim_->findData(3);
+      if (idx >= 0) {
+        mesh_dim_->setCurrentIndex(idx);
+      }
+    }
+    on_generate();
+  });
+
+  auto* generate_row = new QHBoxLayout();
+  generate_row->addWidget(generate_btn);
+  generate_row->addWidget(generate_2d_btn);
+  generate_row->addWidget(generate_3d_btn);
+  auto* generate_container = new QWidget();
+  generate_container->setLayout(generate_row);
+  content_layout->addWidget(generate_container);
 
   log_ = new QPlainTextEdit();
   log_->setReadOnly(true);
@@ -748,6 +873,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   tune_gmsh_combo(elem_order_, 140, 160);
   tune_gmsh_combo(high_order_opt_, 220, 240);
   tune_gmsh_combo(msh_version_, 110, 140);
+  tune_gmsh_combo(mesh_dim_, 90, 120);
   tune_gmsh_combo(algo2d_, 150, 180);
   tune_gmsh_combo(algo3d_, 150, 180);
 
@@ -809,6 +935,7 @@ bool GmshPanel::import_geometry(const QString& path, bool auto_mesh) {
     update_entity_list();
     update_physical_group_list();
     update_field_list();
+    refresh_occ_entity_template_lists();
 
     std::vector<std::string> log;
     gmsh::logger::get(log);
@@ -839,6 +966,7 @@ QVariantMap GmshPanel::gmsh_settings() const {
   map.insert("size_y", size_y_ ? size_y_->value() : 1.0);
   map.insert("size_z", size_z_ ? size_z_->value() : 1.0);
   map.insert("mesh_size", mesh_size_ ? mesh_size_->value() : 0.2);
+  map.insert("mesh_dim", mesh_dim_ ? mesh_dim_->currentData().toInt() : -1);
   map.insert("elem_order",
              elem_order_ ? elem_order_->currentData().toInt() : 1);
   map.insert("msh_version",
@@ -918,6 +1046,9 @@ void GmshPanel::apply_gmsh_settings(const QVariantMap& settings) {
   if (mesh_size_) {
     mesh_size_->setValue(
         settings.value("mesh_size", mesh_size_->value()).toDouble());
+  }
+  if (mesh_dim_) {
+    set_combo_data(mesh_dim_, settings.value("mesh_dim", -1).toInt());
   }
   if (elem_order_) {
     set_combo_data(elem_order_,
@@ -1018,6 +1149,7 @@ void GmshPanel::apply_gmsh_settings(const QVariantMap& settings) {
 
   update_geometry_controls();
   update_primitive_controls();
+  refresh_occ_entity_template_lists();
 }
 
 GmshPanel::~GmshPanel() {
@@ -1071,6 +1203,7 @@ void GmshPanel::on_clear_model() {
   update_physical_group_list();
   update_field_list();
   use_sample_box_->setChecked(true);
+  refresh_occ_entity_template_lists();
   append_log("Model cleared.");
 #endif
 }
@@ -1238,7 +1371,20 @@ void GmshPanel::on_generate() {
       gmsh::model::mesh::clear();
     }
 
-    const int dim = infer_mesh_dim();
+    int dim = infer_mesh_dim();
+    if (mesh_dim_) {
+      const int configured = mesh_dim_->currentData().toInt();
+      if (configured >= 1 && configured <= 3) {
+        if (configured <= dim) {
+          dim = configured;
+        } else {
+          append_log(QString("Requested mesh dim %1 exceeds geometry dim %2, "
+                            "fallback to %2.")
+                         .arg(configured)
+                         .arg(dim));
+        }
+      }
+    }
     gmsh::model::mesh::generate(dim);
     const int boundary_dim = std::max(0, dim - 1);
 
@@ -1399,6 +1545,7 @@ void GmshPanel::on_add_primitive() {
     }
     update_entity_summary();
     update_entity_list();
+    refresh_occ_entity_template_lists();
 
     std::vector<std::string> log;
     gmsh::logger::get(log);
@@ -1422,9 +1569,13 @@ void GmshPanel::on_apply_translate() {
     ensure_gmsh();
     const int dim = transform_dim_->currentData().toInt();
     const auto tokens = parse_dim_tag_tokens(transform_ids_->text());
-    auto tags = resolve_dim_tags(dim, tokens);
+    auto tags = resolve_occ_dim_tags(dim, tokens);
     if (tags.empty()) {
-      append_log("Translate: no valid entities selected.");
+      if (tokens.empty()) {
+        append_log("Translate: no selectable entities for current dimension.");
+      } else {
+        append_log("Translate: no valid OCC entities in selection.");
+      }
       return;
     }
     gmsh::model::occ::translate(tags, trans_dx_->value(), trans_dy_->value(),
@@ -1432,6 +1583,7 @@ void GmshPanel::on_apply_translate() {
     gmsh::model::occ::synchronize();
     update_entity_summary();
     update_entity_list();
+    refresh_occ_entity_template_lists();
     append_log(QString("Translated %1 entities.").arg(tags.size()));
   } catch (const std::exception& ex) {
     append_log(QString("Translate failed: %1").arg(ex.what()));
@@ -1448,9 +1600,13 @@ void GmshPanel::on_apply_rotate() {
     ensure_gmsh();
     const int dim = transform_dim_->currentData().toInt();
     const auto tokens = parse_dim_tag_tokens(transform_ids_->text());
-    auto tags = resolve_dim_tags(dim, tokens);
+    auto tags = resolve_occ_dim_tags(dim, tokens);
     if (tags.empty()) {
-      append_log("Rotate: no valid entities selected.");
+      if (tokens.empty()) {
+        append_log("Rotate: no selectable entities for current dimension.");
+      } else {
+        append_log("Rotate: no valid OCC entities in selection.");
+      }
       return;
     }
     const double angle = rot_angle_->value() * 3.141592653589793 / 180.0;
@@ -1460,6 +1616,7 @@ void GmshPanel::on_apply_rotate() {
     gmsh::model::occ::synchronize();
     update_entity_summary();
     update_entity_list();
+    refresh_occ_entity_template_lists();
     append_log(QString("Rotated %1 entities.").arg(tags.size()));
   } catch (const std::exception& ex) {
     append_log(QString("Rotate failed: %1").arg(ex.what()));
@@ -1476,9 +1633,13 @@ void GmshPanel::on_apply_scale() {
     ensure_gmsh();
     const int dim = transform_dim_->currentData().toInt();
     const auto tokens = parse_dim_tag_tokens(transform_ids_->text());
-    auto tags = resolve_dim_tags(dim, tokens);
+    auto tags = resolve_occ_dim_tags(dim, tokens);
     if (tags.empty()) {
-      append_log("Scale: no valid entities selected.");
+      if (tokens.empty()) {
+        append_log("Scale: no selectable entities for current dimension.");
+      } else {
+        append_log("Scale: no valid OCC entities in selection.");
+      }
       return;
     }
     gmsh::model::occ::dilate(tags, scale_cx_->value(), scale_cy_->value(),
@@ -1487,6 +1648,7 @@ void GmshPanel::on_apply_scale() {
     gmsh::model::occ::synchronize();
     update_entity_summary();
     update_entity_list();
+    refresh_occ_entity_template_lists();
     append_log(QString("Scaled %1 entities.").arg(tags.size()));
   } catch (const std::exception& ex) {
     append_log(QString("Scale failed: %1").arg(ex.what()));
@@ -1508,10 +1670,15 @@ void GmshPanel::on_apply_boolean_fuse() {
       append_log("Fuse: object/tool IDs required.");
       return;
     }
-    auto obj_tags = resolve_dim_tags(dim, obj_tokens);
-    auto tool_tags = resolve_dim_tags(dim, tool_tokens);
+    auto obj_tags = resolve_occ_dim_tags(dim, obj_tokens);
+    auto tool_tags = resolve_occ_dim_tags(dim, tool_tokens);
     if (obj_tags.empty() || tool_tags.empty()) {
-      append_log("Fuse: no valid object/tool entities.");
+      if (obj_tags.empty()) {
+        append_log("Fuse: no valid OCC object entities.");
+      }
+      if (tool_tags.empty()) {
+        append_log("Fuse: no valid OCC tool entities.");
+      }
       return;
     }
     gmsh::vectorpair out_tags;
@@ -1522,6 +1689,7 @@ void GmshPanel::on_apply_boolean_fuse() {
     gmsh::model::occ::synchronize();
     update_entity_summary();
     update_entity_list();
+    refresh_occ_entity_template_lists();
     append_log(QString("Fuse result: %1 entities.").arg(out_tags.size()));
   } catch (const std::exception& ex) {
     append_log(QString("Fuse failed: %1").arg(ex.what()));
@@ -1543,10 +1711,15 @@ void GmshPanel::on_apply_boolean_cut() {
       append_log("Cut: object/tool IDs required.");
       return;
     }
-    auto obj_tags = resolve_dim_tags(dim, obj_tokens);
-    auto tool_tags = resolve_dim_tags(dim, tool_tokens);
+    auto obj_tags = resolve_occ_dim_tags(dim, obj_tokens);
+    auto tool_tags = resolve_occ_dim_tags(dim, tool_tokens);
     if (obj_tags.empty() || tool_tags.empty()) {
-      append_log("Cut: no valid object/tool entities.");
+      if (obj_tags.empty()) {
+        append_log("Cut: no valid OCC object entities.");
+      }
+      if (tool_tags.empty()) {
+        append_log("Cut: no valid OCC tool entities.");
+      }
       return;
     }
     gmsh::vectorpair out_tags;
@@ -1557,6 +1730,7 @@ void GmshPanel::on_apply_boolean_cut() {
     gmsh::model::occ::synchronize();
     update_entity_summary();
     update_entity_list();
+    refresh_occ_entity_template_lists();
     append_log(QString("Cut result: %1 entities.").arg(out_tags.size()));
   } catch (const std::exception& ex) {
     append_log(QString("Cut failed: %1").arg(ex.what()));
@@ -1578,10 +1752,15 @@ void GmshPanel::on_apply_boolean_intersect() {
       append_log("Intersect: object/tool IDs required.");
       return;
     }
-    auto obj_tags = resolve_dim_tags(dim, obj_tokens);
-    auto tool_tags = resolve_dim_tags(dim, tool_tokens);
+    auto obj_tags = resolve_occ_dim_tags(dim, obj_tokens);
+    auto tool_tags = resolve_occ_dim_tags(dim, tool_tokens);
     if (obj_tags.empty() || tool_tags.empty()) {
-      append_log("Intersect: no valid object/tool entities.");
+      if (obj_tags.empty()) {
+        append_log("Intersect: no valid OCC object entities.");
+      }
+      if (tool_tags.empty()) {
+        append_log("Intersect: no valid OCC tool entities.");
+      }
       return;
     }
     gmsh::vectorpair out_tags;
@@ -1592,6 +1771,7 @@ void GmshPanel::on_apply_boolean_intersect() {
     gmsh::model::occ::synchronize();
     update_entity_summary();
     update_entity_list();
+    refresh_occ_entity_template_lists();
     append_log(QString("Intersect result: %1 entities.").arg(out_tags.size()));
   } catch (const std::exception& ex) {
     append_log(QString("Intersect failed: %1").arg(ex.what()));
@@ -1607,6 +1787,10 @@ void GmshPanel::on_physical_group_selected(int) {
 #ifndef GMP_ENABLE_GMSH_GUI
   return;
 #else
+  ensure_gmsh();
+  if (!gmsh_ready_) {
+    return;
+  }
   if (!phys_group_list_) {
     return;
   }
@@ -2228,6 +2412,223 @@ int GmshPanel::infer_mesh_dim() const {
 #endif
 }
 
+void GmshPanel::append_entity_template(QLineEdit* target,
+                                       const QString& token) {
+  if (!target) {
+    return;
+  }
+  const QString trimmed = token.trimmed();
+  if (trimmed.isEmpty() || trimmed == "Templates") {
+    return;
+  }
+  QStringList values = target->text().split(QRegularExpression("[,\\s]+"),
+                                           Qt::SkipEmptyParts);
+  if (values.isEmpty()) {
+    target->setText(trimmed);
+    return;
+  }
+  if (!values.contains(trimmed)) {
+    values << trimmed;
+  }
+  target->setText(values.join(", "));
+  target->setFocus();
+}
+
+QStringList GmshPanel::invalid_entity_tokens(const QString& text, int dim_filter,
+                                            bool occ_only) const {
+  QStringList invalid;
+#ifdef GMP_ENABLE_GMSH_GUI
+  if (!gmsh_ready_) {
+    return invalid;
+  }
+  const QString normalized = text.trimmed();
+  if (normalized.isEmpty()) {
+    return invalid;
+  }
+
+  std::vector<std::pair<int, int>> entities;
+  if (occ_only) {
+    if (dim_filter >= 0) {
+      gmsh::model::occ::getEntities(entities, dim_filter);
+    } else {
+      for (int dim = 0; dim <= 3; ++dim) {
+        std::vector<std::pair<int, int>> ents;
+        gmsh::model::occ::getEntities(ents, dim);
+        entities.insert(entities.end(), ents.begin(), ents.end());
+      }
+    }
+  } else {
+    if (dim_filter >= 0) {
+      gmsh::model::getEntities(entities, dim_filter);
+    } else {
+      gmsh::model::getEntities(entities);
+    }
+  }
+
+  std::unordered_set<long long> existing;
+  existing.reserve(entities.size());
+  for (const auto& e : entities) {
+    const long long key =
+        (static_cast<long long>(e.first) << 32) |
+        static_cast<unsigned int>(e.second);
+    existing.insert(key);
+  }
+
+  const QStringList parts =
+      normalized.split(QRegularExpression("[,\\s]+"), Qt::SkipEmptyParts);
+  for (const auto& part : parts) {
+    const QString token = part.trimmed();
+    if (token.isEmpty()) {
+      continue;
+    }
+    const int colon = token.indexOf(':');
+    bool ok = true;
+    int dim = dim_filter;
+    int tag = 0;
+    if (colon >= 0) {
+      const int second_colon = token.indexOf(':', colon + 1);
+      if (second_colon >= 0) {
+        ok = false;
+      } else {
+        const QString dim_text = token.left(colon).trimmed();
+        const QString tag_text = token.mid(colon + 1).trimmed();
+        if (dim_text.isEmpty() || tag_text.isEmpty()) {
+          ok = false;
+        } else {
+          bool ok_dim = false;
+          bool ok_tag = false;
+          dim = dim_text.toInt(&ok_dim);
+          tag = tag_text.toInt(&ok_tag);
+          if (!ok_dim || !ok_tag || dim < 0 || dim > 3 || tag <= 0) {
+            ok = false;
+          }
+        }
+      }
+    } else {
+      bool ok_tag = false;
+      tag = token.toInt(&ok_tag);
+      if (!ok_tag || tag <= 0) {
+        ok = false;
+      }
+    }
+    if (!ok) {
+      invalid << token;
+      continue;
+    }
+    if (!existing.count((static_cast<long long>(dim) << 32) |
+                       static_cast<unsigned int>(tag))) {
+      invalid << token;
+    }
+  }
+#endif
+  return invalid;
+}
+
+void GmshPanel::validate_entity_input(QLineEdit* input, int dim_filter,
+                                     bool occ_only) {
+  if (!input) {
+    return;
+  }
+  const QStringList invalid = invalid_entity_tokens(input->text(), dim_filter,
+                                                  occ_only);
+  if (invalid.isEmpty()) {
+    input->setStyleSheet(QString());
+    input->setToolTip(QString());
+    return;
+  }
+  input->setStyleSheet(
+      "QLineEdit{border: 1px solid #d32f2f; background: #fff5f6;}");
+  input->setToolTip(
+      QString("Invalid entities: %1").arg(invalid.join(", ")));
+}
+
+static void fill_entity_template_combo(QComboBox* combo, int dim_filter,
+                                      int max_items = 20) {
+  if (!combo) {
+    return;
+  }
+  combo->clear();
+  combo->addItem("Templates");
+
+#ifdef GMP_ENABLE_GMSH_GUI
+  try {
+    std::vector<std::pair<int, int>> entities;
+    if (dim_filter >= 0) {
+      gmsh::model::occ::getEntities(entities, dim_filter);
+    } else {
+      for (int dim = 0; dim <= 3; ++dim) {
+        std::vector<std::pair<int, int>> ents;
+        gmsh::model::occ::getEntities(ents, dim);
+        entities.insert(entities.end(), ents.begin(), ents.end());
+      }
+    }
+    if (!entities.empty()) {
+      std::sort(entities.begin(), entities.end(),
+                [](const std::pair<int, int>& a,
+                   const std::pair<int, int>& b) {
+                  if (a.first != b.first) {
+                    return a.first < b.first;
+                  }
+                  return a.second < b.second;
+                });
+      int added = 0;
+      for (const auto& e : entities) {
+        if (added >= max_items) {
+          break;
+        }
+        combo->addItem(QString("%1:%2").arg(e.first).arg(e.second));
+        ++added;
+      }
+      if (!entities.empty()) {
+        return;
+      }
+    }
+  } catch (...) {
+    // Fall through to defaults.
+  }
+#endif
+
+  combo->addItem("1:1");
+  combo->addItem("2:1");
+  combo->addItem("3:1");
+  combo->addItem("2:1, 3:1");
+  combo->addItem("0:1");
+  combo->addItem("1:1,1:2");
+}
+
+
+void GmshPanel::populate_transform_entity_templates(int dim_filter) {
+  fill_entity_template_combo(transform_template_, dim_filter, 24);
+}
+
+void GmshPanel::populate_boolean_entity_templates(int dim_filter) {
+  fill_entity_template_combo(boolean_obj_template_, dim_filter, 24);
+  fill_entity_template_combo(boolean_tool_template_, dim_filter, 24);
+}
+
+void GmshPanel::refresh_occ_entity_template_lists() {
+  const int transform_dim =
+      transform_dim_ ? transform_dim_->currentData().toInt() : -1;
+  const int boolean_dim =
+      boolean_dim_ ? boolean_dim_->currentData().toInt() : 3;
+  populate_transform_entity_templates(transform_dim);
+  populate_boolean_entity_templates(boolean_dim);
+  validate_entity_input(transform_ids_, transform_dim, true);
+  validate_entity_input(boolean_obj_ids_, boolean_dim, true);
+  validate_entity_input(boolean_tool_ids_, boolean_dim, true);
+  validate_entity_input(phys_group_entities_,
+                        phys_group_dim_ ? phys_group_dim_->currentData().toInt()
+                                       : -1,
+                        false);
+  validate_entity_input(field_entities_,
+                        field_dim_ ? field_dim_->currentData().toInt() : -1,
+                        false);
+  validate_entity_input(entity_size_ids_,
+                        entity_size_dim_ ? entity_size_dim_->currentData().toInt()
+                                        : -1,
+                        false);
+}
+
 std::vector<int> GmshPanel::resolve_entity_tags(int dim_filter,
                                                 const QString& text) const {
   std::vector<int> tags;
@@ -2428,11 +2829,63 @@ std::vector<std::pair<int, int>> GmshPanel::resolve_dim_tags(
   }
 
   tags.assign(out.begin(), out.end());
+  return tags;
 #else
   (void)dim_filter;
   (void)tokens;
 #endif
   return tags;
+}
+
+std::vector<std::pair<int, int>> GmshPanel::resolve_occ_dim_tags(
+    int dim_filter, const std::vector<DimTagToken>& tokens) const {
+#ifdef GMP_ENABLE_GMSH_GUI
+  std::vector<std::pair<int, int>> tags;
+  if (!gmsh_ready_) {
+    return tags;
+  }
+
+  auto make_key = [](int dim, int tag) -> long long {
+    return (static_cast<long long>(dim) << 32) |
+           static_cast<unsigned int>(tag);
+  };
+
+  std::vector<std::pair<int, int>> occ_entities;
+  if (dim_filter >= 0) {
+    gmsh::model::occ::getEntities(occ_entities, dim_filter);
+  } else {
+    for (int dim = 0; dim <= 3; ++dim) {
+      std::vector<std::pair<int, int>> ents;
+      gmsh::model::occ::getEntities(ents, dim);
+      occ_entities.insert(occ_entities.end(), ents.begin(), ents.end());
+    }
+  }
+
+  std::unordered_set<long long> occ_keys;
+  occ_keys.reserve(occ_entities.size());
+  for (const auto& e : occ_entities) {
+    occ_keys.insert(make_key(e.first, e.second));
+  }
+
+  if (tokens.empty()) {
+    return occ_entities;
+  }
+
+  std::set<std::pair<int, int>> out;
+  auto resolved = resolve_dim_tags(dim_filter, tokens);
+  for (const auto& p : resolved) {
+    if (occ_keys.count(make_key(p.first, p.second)) > 0) {
+      out.emplace(p.first, p.second);
+    }
+  }
+
+  tags.assign(out.begin(), out.end());
+  return tags;
+#else
+  (void)dim_filter;
+  (void)tokens;
+  return {};
+#endif
 }
 
 void GmshPanel::append_log(const QString& text) {

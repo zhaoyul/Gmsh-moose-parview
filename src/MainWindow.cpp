@@ -777,6 +777,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
       table_status->setText(viewer_->table_stats_snapshot());
     }
   });
+  connect(job_page, &MoosePanel::exodus_ready, table_refresh_btn,
+          [table_refresh_btn]() { table_refresh_btn->click(); });
+  connect(job_page, &MoosePanel::exodus_ready, plot_refresh_btn,
+          [plot_refresh_btn]() { plot_refresh_btn->click(); });
   connect(gmsh_panel_, &GmshPanel::mesh_written, table_refresh_btn,
           [table_refresh_btn]() { table_refresh_btn->click(); });
   connect(center_tabs, &QTabWidget::currentChanged, this,
@@ -800,7 +804,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(plot_open_btn, &QPushButton::clicked, this,
           [this, center_tabs]() { center_tabs->setCurrentIndex(0); });
   connect(table_open_btn, &QPushButton::clicked, this,
-          [this, center_tabs]() { center_tabs->setCurrentIndex(1); });
+          [this, center_tabs]() { center_tabs->setCurrentIndex(2); });
 
   connect(mesh_page, &GmshPanel::mesh_written, job_page,
           &MoosePanel::set_mesh_path);

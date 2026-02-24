@@ -81,6 +81,14 @@ class GmshPanel : public QWidget {
                                const QString& current_text);
   std::vector<int> resolve_entity_tags(int dim_filter,
                                        const QString& text) const;
+  void populate_transform_entity_templates(int dim_filter);
+  void populate_boolean_entity_templates(int dim_filter);
+  void refresh_occ_entity_template_lists();
+  void validate_entity_input(QLineEdit* input, int dim_filter,
+                            bool occ_only = false);
+  QStringList invalid_entity_tokens(const QString& text, int dim_filter,
+                                   bool occ_only) const;
+  void append_entity_template(QLineEdit* target, const QString& token);
   struct DimTagToken {
     int dim = -1;
     int tag = 0;
@@ -88,6 +96,8 @@ class GmshPanel : public QWidget {
   };
   std::vector<DimTagToken> parse_dim_tag_tokens(const QString& text) const;
   std::vector<std::pair<int, int>> resolve_dim_tags(
+      int dim_filter, const std::vector<DimTagToken>& tokens) const;
+  std::vector<std::pair<int, int>> resolve_occ_dim_tags(
       int dim_filter, const std::vector<DimTagToken>& tokens) const;
   void append_log(const QString& text);
 
@@ -102,6 +112,7 @@ class GmshPanel : public QWidget {
   QDoubleSpinBox* size_y_ = nullptr;
   QDoubleSpinBox* size_z_ = nullptr;
   QDoubleSpinBox* mesh_size_ = nullptr;
+  QComboBox* mesh_dim_ = nullptr;
   QComboBox* elem_order_ = nullptr;
   QComboBox* msh_version_ = nullptr;
   QCheckBox* optimize_ = nullptr;
@@ -124,6 +135,7 @@ class GmshPanel : public QWidget {
 
   QComboBox* transform_dim_ = nullptr;
   QLineEdit* transform_ids_ = nullptr;
+  QComboBox* transform_template_ = nullptr;
   QDoubleSpinBox* trans_dx_ = nullptr;
   QDoubleSpinBox* trans_dy_ = nullptr;
   QDoubleSpinBox* trans_dz_ = nullptr;
@@ -144,6 +156,8 @@ class GmshPanel : public QWidget {
   QComboBox* boolean_dim_ = nullptr;
   QLineEdit* boolean_obj_ids_ = nullptr;
   QLineEdit* boolean_tool_ids_ = nullptr;
+  QComboBox* boolean_obj_template_ = nullptr;
+  QComboBox* boolean_tool_template_ = nullptr;
   QCheckBox* boolean_remove_obj_ = nullptr;
   QCheckBox* boolean_remove_tool_ = nullptr;
 

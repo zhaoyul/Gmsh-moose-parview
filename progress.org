@@ -278,3 +278,29 @@
 ** Progress Update (2026-02-24)
    - 下拉修复收敛：`GmshPanel` 和 `VtkViewer` 移除各自的重复实现，统一复用 `ComboPopupFix`（箭头显示、下沿弹出、内容宽度与最小高度逻辑集中在共享实现）。
    - 回归：已完成全量构建（`cmake --build build -j4`）并通过，`GmshPanel`/`VTK` 下拉现在走同一套弹窗修复流程。
+   - 变换/布尔运算稳定性修复：`translate/rotate/scale` 与 `fuse/cut/intersect` 先过滤为 OCC 实体后再操作，避免将网格实体/非 OCC 实体喂给 `gmsh::model::occ::*` 导致的崩溃（如 `Unknown OpenCASCADE entity`）。
+   - 变换操作提示优化：当选择为空时区分“当前维度无可选实体”和“输入存在但都非 OCC 实体”，便于定位问题来源。
+   - 继续建议：补齐 Transform 对话中预置示例（如 1:1,3:1）与历史输入提示；后续再补“非法 ID 可高亮/标记”。
+** Progress Update (2026-02-24)
+   - Gmsh 功能增强：Mesh 面板新增 `Generate Dim (Auto/1D/2D/3D)` 控制项，支持在几何允许时显式指定 `gmsh::model::mesh::generate` 维度；
+   - 配置持久化更新：新增 `mesh_dim` 存储与加载；
+   - 目标维度超过几何实际维度时自动回退并在日志提示，避免误操作造成 2D 几何仍按 3D 生成失败。
+** Progress Update (2026-02-24)
+   - Gmsh 生成控制增强：新增 `Generate 2D Mesh` 与 `Generate 3D Mesh` 快捷按钮，自动切换 `Generate Dim` 后发起建模运行，降低“默认得到平面网格”误操作。
+** Progress Update (2026-02-24)
+   - Center 中 `Plot` / `Table` 预览联动完善：
+     - 修正 `Table` 面板“Open Visualization”跳转目标到 `Table` 页签（原误为 Plot）。
+     - 结果产出后自动刷新 Plot/Table 快照（`exodus_ready` 时），减少手工刷新步骤。
+** Progress Update (2026-02-24)
+   - Step-Order “先2 再1” 执行：
+     - `2`（Transform/Boolean 实体模板下拉）已完成：在输入框添加可编辑模板选择，并与实体列表动态联动。
+     - `1`（非法实体 ID 高亮）已完成：在 `Transform` / `Boolean` / `Physical Group` / `Mesh Field` / `Entity Size` 输入框中，支持实时语法与存在性校验。
+       - 语法错误或不存在的实体会直接高亮输入框（红框+淡红底）并显示 tooltip。
+       - `Transform`/`Boolean` 改为只接受 OCC 实体校验来源，避免再次误入非 OCC 实体路径。
+       - 维度变更、模型刷新、项目配置回放后会自动重校验旧输入，避免“清场后残留失效ID”误导提交。
+     - 编译与回归：`cmake --build build -j4` 通过。
+** Progress Update (2026-02-24)
+   - 定位并修复启动/项目回放期常见崩溃：
+     - `QFormLayout` 清理逻辑改为基于 `count()` 的安全迭代，防止 `QFormLayout::takeAt` 越界警告。
+     - `GmshPanel::on_physical_group_selected` 在执行 `gmsh::model::*` 查询前增加 `ensure_gmsh()` 与 readiness 检查，避免“Gmsh has not been initialized”报错。
+   - 编译与回归：`cmake --build build -j4` 通过。

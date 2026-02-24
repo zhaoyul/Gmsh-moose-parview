@@ -1351,7 +1351,11 @@ void PropertyEditor::clear_form() {
   template_presets_.clear();
   template_combo_ = nullptr;
   apply_template_btn_ = nullptr;
-  while (QLayoutItem* item = form_layout_->takeAt(0)) {
+  while (form_layout_->count() > 0) {
+    QLayoutItem* item = form_layout_->takeAt(0);
+    if (!item) {
+      break;
+    }
     if (auto* widget = item->widget()) {
       widget->deleteLater();
     }
