@@ -180,7 +180,7 @@
      - [ ] Load: load presets, bulk creation, and reuse by group.
      - [ ] Visualization: currently mapped to existing VTK result tabs; remove/replace any dead placeholder surfaces.
      - [ ] Results: output dataset selector + quick open of `.e`/`csv`/`txt` summaries.
-   - [ ] Map all module tabs in `MainWindow` explicitly (remove generic fallback behavior).
+     - [X] Map all module tabs in `MainWindow` explicitly (remove generic fallback behavior).
    - [ ] Replace center tab placeholders (`Plot view` / `Table view`) with functional content pages and link to result outputs.
 
 ** Phase 1: Project + Session UX
@@ -267,3 +267,14 @@
    - 下拉箭头修复：更新为正确的 inline SVG glyph，恢复所有平台的箭头可见性。
    - 弹窗高度修复：为 `QComboBox` 弹出列表添加基于行高/行数的最小高度保护，避免“几像素”级高度塌陷（单项看不到完整列表）。
    - 生成后续建议：请复测 `Gmsh`/`VTK` 与 `Property` 区域内每个下拉框的箭头与下拉项高度是否恢复正常；仍异常可按 combo 名称补充针对性修复。
+
+** Progress Update (2026-02-24)
+   - 统一抽象 `QComboBox` 下拉框修复逻辑为共享工具 (`ComboPopupFix`)，并接入 `Property` 与 `MOOSE` 模块动态生成下拉框；
+   - `Property` 面板与 `MOOSE` 面板的下拉框已统一安装弹窗修复钩子，优先确保下拉箭头可见、弹出位置在输入框下沿且可见项高度不少于几行；
+   - 仍建议对 `Gmsh`/`VTK` 自有实现继续保持回归验证，特别是 `Transform` 维度下拉与网格参数下拉。 
+** Progress Update (2026-02-24)
+   - 模块页切换修复：修正顶部模块标签到右侧页签的映射（`Visualization` 正确映射到结果页签 `8`，避免仍停留在 Job 页）。
+   - 图表/表格入口修复：Plot/Plot helper 与 Table 的跳转按钮改为各自目标页（`table_open` 直接切到 `Table` 页面）。
+** Progress Update (2026-02-24)
+   - 下拉修复收敛：`GmshPanel` 和 `VtkViewer` 移除各自的重复实现，统一复用 `ComboPopupFix`（箭头显示、下沿弹出、内容宽度与最小高度逻辑集中在共享实现）。
+   - 回归：已完成全量构建（`cmake --build build -j4`）并通过，`GmshPanel`/`VTK` 下拉现在走同一套弹窗修复流程。

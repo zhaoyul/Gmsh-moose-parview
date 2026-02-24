@@ -19,6 +19,8 @@
 #include <QDialog>
 #include <QPlainTextEdit>
 
+#include "gmp/ComboPopupFix.h"
+
 namespace gmp {
 
 PropertyEditor::PropertyEditor(QWidget* parent) : QWidget(parent) {
@@ -78,6 +80,7 @@ PropertyEditor::PropertyEditor(QWidget* parent) : QWidget(parent) {
   auto* sync_row = new QHBoxLayout();
   sync_row->addWidget(new QLabel("Sync", params_tab_));
   sync_mode_ = new QComboBox(params_tab_);
+  install_combo_popup_fix(sync_mode_);
   sync_mode_->addItem("Bidirectional (Recommended)");
   sync_mode_->addItem("Quick Form Wins");
   sync_mode_->setToolTip("Controls how Advanced Parameters sync with Quick form");
@@ -933,6 +936,7 @@ void PropertyEditor::build_form_for_kind(const QString& kind) {
   auto* template_layout = new QHBoxLayout(template_row);
   template_layout->setContentsMargins(0, 0, 0, 0);
   template_combo_ = new QComboBox(template_row);
+  install_combo_popup_fix(template_combo_);
   template_combo_->addItem("Type Defaults");
   apply_template_btn_ = new QPushButton("Apply Template", template_row);
   template_layout->addWidget(template_combo_);
@@ -957,6 +961,7 @@ void PropertyEditor::build_form_for_kind(const QString& kind) {
   auto add_combo = [this](const QString& label, const QString& key,
                           const QStringList& items) {
     auto* combo = new QComboBox(form_box_);
+    install_combo_popup_fix(combo);
     combo->addItems(items);
     combo->setEditable(true);
     form_layout_->addRow(label, combo);

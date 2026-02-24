@@ -13,6 +13,7 @@
 #include <QPushButton>
 #include <QDialog>
 #include <QTableWidget>
+#include <QListWidget>
 #include <QHeaderView>
 #include <QStatusBar>
 #include <QSplitter>
@@ -267,6 +268,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   module_tabs_->addTab("Mesh");
   module_tabs_->addTab("Job");
   module_tabs_->addTab("Visualization");
+  module_tabs_->addTab("Results");
   main_layout->addWidget(module_tabs_);
 
   auto make_module_page = [](const QString& title,
@@ -584,6 +586,132 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
           {"Show Table Preview", [center_tabs]() { center_tabs->setCurrentIndex(2); }},
       });
 
+  auto* results_page = new QWidget(property_stack_);
+  auto* results_layout = new QVBoxLayout(results_page);
+  results_layout->setContentsMargins(10, 10, 10, 10);
+  results_layout->setSpacing(6);
+
+  auto* results_head = new QLabel("Results", results_page);
+  QFont results_font = results_head->font();
+  results_font.setPointSize(results_font.pointSize() + 3);
+  results_font.setBold(true);
+  results_head->setFont(results_font);
+  results_layout->addWidget(results_head);
+
+  auto* results_desc = new QLabel(
+      "Review generated outputs and quickly open results in the viewer.",
+      results_page);
+  results_desc->setWordWrap(true);
+  results_layout->addWidget(results_desc);
+
+  auto* results_actions = new QHBoxLayout();
+  auto* results_open_root = new QPushButton("Open Results Root", results_page);
+  auto* results_refresh = new QPushButton("Refresh List", results_page);
+  auto* results_open_view = new QPushButton("Open in Viewer", results_page);
+  auto* results_open_text = new QPushButton("Open as Text", results_page);
+  results_actions->addWidget(results_open_root);
+  results_actions->addWidget(results_refresh);
+  results_actions->addWidget(results_open_view);
+  results_actions->addWidget(results_open_text);
+  results_actions->addStretch(1);
+  auto* results_actions_row = new QWidget(results_page);
+  results_actions_row->setLayout(results_actions);
+  results_layout->addWidget(results_actions_row);
+
+  results_list_ = new QListWidget(results_page);
+  results_list_->setSelectionMode(QAbstractItemView::SingleSelection);
+  results_list_->setMinimumHeight(140);
+  results_layout->addWidget(results_list_);
+
+  results_preview_ = new QPlainTextEdit(results_page);
+  results_preview_->setReadOnly(true);
+  results_preview_->setPlaceholderText("Select a result item for quick preview.");
+  results_preview_->setLineWrapMode(QPlainTextEdit::NoWrap);
+  results_layout->addWidget(results_preview_, 1);
+
+  auto open_results_root = [this]() {
+    if (auto* root = find_root_item("Results")) {
+      model_tree_->setCurrentItem(root);
+      root->setExpanded(true);
+    }
+  };
+
+  connect(results_open_root, &QPushButton::clicked, this,
+          open_results_root);
+  connect(results_refresh, &QPushButton::clicked, this,
+          [this]() { refresh_results_panel(); });
+  connect(results_open_view, &QPushButton::clicked, this,
+          [this, center_tabs]() {
+            if (!results_list_ || !viewer_) {
+              return;
+            }
+            const auto* item = results_list_->currentItem();
+            if (!item) {
+              statusBar()->showMessage("Select a result first.", 2000);
+              return;
+            }
+            const QString path = item->data(Qt::UserRole).toString();
+            if (path.isEmpty()) {
+              statusBar()->showMessage("Selected result has no path.", 2000);
+              return;
+            }
+            const QString ext = QFileInfo(path).suffix().toLower();
+            if (ext == "e" || ext == "exo" || ext == "exodus") {
+              viewer_->set_exodus_file(path);
+            } else {
+              viewer_->set_mesh_file(path);
+            }
+            center_tabs->setCurrentIndex(0);
+            statusBar()->showMessage("Opened result in viewer.", 1500);
+          });
+  connect(results_open_text, &QPushButton::clicked, this,
+          [this]() {
+            if (!results_list_ || !results_preview_) {
+              return;
+            }
+            const auto* item = results_list_->currentItem();
+            if (!item) {
+              statusBar()->showMessage("Select a result first.", 2000);
+              return;
+            }
+            const QString path = item->data(Qt::UserRole).toString();
+            if (path.isEmpty()) {
+              results_preview_->setPlainText("No file path for this result.");
+              return;
+            }
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+              results_preview_->setPlainText(
+                  QString("Failed to open file: %1").arg(path));
+              return;
+            }
+            results_preview_->setPlainText(QString::fromUtf8(f.readAll()));
+          });
+  connect(results_list_, &QListWidget::currentItemChanged, this,
+          [this](QListWidgetItem* current, QListWidgetItem*) {
+            if (!results_preview_ || !current) {
+              if (results_preview_) {
+                results_preview_->clear();
+              }
+              return;
+            }
+            const QString path = current->data(Qt::UserRole).toString();
+            if (path.isEmpty()) {
+              results_preview_->setPlainText(
+                  QString("No file attached for: %1")
+                      .arg(current->text()));
+              return;
+            }
+            const QString job = current->data(Qt::UserRole + 1).toString();
+            QString details = QString("Result: %1\nPath: %2")
+                                  .arg(current->text())
+                                  .arg(path);
+            if (!job.isEmpty()) {
+              details += QString("\nJob: %1").arg(job);
+            }
+            results_preview_->setPlainText(details);
+          });
+
   property_stack_->addWidget(property_editor_);
   property_stack_->addWidget(part_page);
   property_stack_->addWidget(assembly_page);
@@ -593,6 +721,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   property_stack_->addWidget(mesh_page);
   property_stack_->addWidget(job_container);
   property_stack_->addWidget(visualization_page);
+  property_stack_->addWidget(results_page);
 
   console_ = new QPlainTextEdit(vertical_split);
   console_->setReadOnly(true);
@@ -608,47 +737,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   connect(module_tabs_, &QTabBar::currentChanged, this,
           [this](int index) {
-            int target = 0;
-            switch (index) {
-              case 0:
-                target = 1;
-                break;
-              case 1:
-                target = 0;
-                break;
-              case 2:
-                target = 2;
-                break;
-              case 3:
-                target = 3;
-                break;
-              case 4:
-                target = 4;
-                break;
-              case 5:
-                target = 5;
-                break;
-              case 6:
-                target = 6;
-                break;
-              case 7:
-                target = 7;
-                break;
-              case 8:
-                target = 7;
-                break;
-              default:
-                target = 0;
-            }
+            static constexpr int module_to_property[] = {1, 0, 2, 3, 4, 5, 6, 7, 8, 9};
+            constexpr int module_count = 10;
+            const int target =
+                (index >= 0 && index < module_count) ? module_to_property[index] : 0;
             if (target >= 0 && target < property_stack_->count()) {
               property_stack_->setCurrentIndex(target);
+            }
+            if (index == 9) {
+              refresh_results_panel();
             }
             if (target == 0 && property_editor_) {
               property_editor_->set_item(model_tree_->currentItem());
             }
           });
   module_tabs_->setCurrentIndex(8);
-  property_stack_->setCurrentIndex(7);
+  property_stack_->setCurrentIndex(8);
 
   const QString initial_plot = viewer_->plot_snapshot_text();
   const QString initial_plot_stats = viewer_->plot_stats_snapshot();
@@ -696,7 +800,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(plot_open_btn, &QPushButton::clicked, this,
           [this, center_tabs]() { center_tabs->setCurrentIndex(0); });
   connect(table_open_btn, &QPushButton::clicked, this,
-          [this, center_tabs]() { center_tabs->setCurrentIndex(0); });
+          [this, center_tabs]() { center_tabs->setCurrentIndex(1); });
 
   connect(mesh_page, &GmshPanel::mesh_written, job_page,
           &MoosePanel::set_mesh_path);
@@ -1416,6 +1520,54 @@ void MainWindow::upsert_result_item(const QString& path,
     item->setData(0, PropertyEditor::kParamsRole, params);
   }
   set_project_dirty(true);
+  refresh_results_panel();
+}
+
+void MainWindow::refresh_results_panel() {
+  if (!results_list_ || !results_preview_) {
+    return;
+  }
+  results_list_->clear();
+  results_preview_->clear();
+
+  auto* root = find_root_item("Results");
+  if (!root || root->childCount() == 0) {
+    if (results_list_->count() == 0) {
+      results_list_->addItem("No results yet.");
+    }
+    return;
+  }
+
+  for (int i = 0; i < root->childCount(); ++i) {
+    auto* item = root->child(i);
+    if (!item) {
+      continue;
+    }
+    const QString name = item->text(0);
+    const QVariantMap params =
+        item->data(0, PropertyEditor::kParamsRole).toMap();
+    const QString path = params.value("path").toString();
+    const QString status = params.value("status").toString();
+    const QString job = params.value("job").toString();
+    QString text = name;
+    if (!status.isEmpty()) {
+      text += QString(" (%1)").arg(status);
+    }
+    if (!job.isEmpty()) {
+      text += QString(" [job:%1]").arg(job);
+    }
+    auto* row = new QListWidgetItem(text, results_list_);
+    row->setData(Qt::UserRole, path);
+    if (!job.isEmpty()) {
+      row->setData(Qt::UserRole + 1, job);
+    }
+    if (!path.isEmpty()) {
+      row->setToolTip(path);
+    }
+  }
+  if (results_list_->count() == 0) {
+    results_list_->addItem("No results yet.");
+  }
 }
 
 QVariantMap MainWindow::default_params_for_kind(const QString& kind) const {
@@ -2136,6 +2288,7 @@ void MainWindow::load_project(const QString& path) {
     }
     suppress_dirty_ = false;
     refresh_job_table();
+    refresh_results_panel();
     add_recent_project(path);
     set_project_dirty(false);
     update_project_status();

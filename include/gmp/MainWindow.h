@@ -7,6 +7,7 @@ class QPlainTextEdit;
 class QAction;
 class QStackedWidget;
 class QTabBar;
+class QListWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QString;
@@ -57,6 +58,7 @@ class MainWindow : public QMainWindow {
   void update_recent_menu();
   void export_debug_bundle();
   void refresh_job_table();
+  void refresh_results_panel();
   int append_job_row(const QString& name, const QVariantMap& params);
   void update_job_row(int row, const QString& name, const QVariantMap& params);
   void update_job_detail(int row);
@@ -79,6 +81,8 @@ class MainWindow : public QMainWindow {
   VtkViewer* viewer_ = nullptr;
   QTableWidget* job_table_ = nullptr;
   QPlainTextEdit* job_detail_ = nullptr;
+  QListWidget* results_list_ = nullptr;
+  QPlainTextEdit* results_preview_ = nullptr;
   QString project_path_;
   bool project_dirty_ = false;
   bool suppress_dirty_ = false;

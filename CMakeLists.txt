@@ -42,6 +42,7 @@ add_executable(gmp_ise
   src/VtkViewer.cpp
   src/PropertyEditor.cpp
   src/LocalRunner.cpp
+  src/ComboPopupFix.cpp
   src/ProcessRunner.cpp
   src/RemoteRunner.cpp
   src/RunnerFactory.cpp

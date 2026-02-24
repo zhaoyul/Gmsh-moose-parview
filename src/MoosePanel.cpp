@@ -24,6 +24,8 @@
 #include <QProcess>
 #include <QStandardPaths>
 
+#include "gmp/ComboPopupFix.h"
+
 #include "gmp/RunSpec.h"
 
 #ifdef GMP_ENABLE_GMSH_GUI
@@ -65,6 +67,7 @@ MoosePanel::MoosePanel(QWidget* parent) : QWidget(parent) {
   auto* paths_form = new QFormLayout(paths_box);
 
   exec_path_ = new QComboBox();
+  install_combo_popup_fix(exec_path_);
   exec_path_->setEditable(true);
   exec_path_->setInsertPolicy(QComboBox::NoInsert);
   exec_path_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -147,6 +150,7 @@ MoosePanel::MoosePanel(QWidget* parent) : QWidget(parent) {
   run_form->addRow("MPI Ranks", mpi_ranks_);
 
   runner_kind_ = new QComboBox();
+  install_combo_popup_fix(runner_kind_);
   runner_kind_->addItem("Local", static_cast<int>(RunnerKind::kLocal));
   runner_kind_->addItem("WSL", static_cast<int>(RunnerKind::kWsl));
   runner_kind_->addItem("Remote", static_cast<int>(RunnerKind::kRemote));
@@ -162,6 +166,7 @@ MoosePanel::MoosePanel(QWidget* parent) : QWidget(parent) {
   auto* io_layout = new QVBoxLayout(io_box);
   auto* template_row = new QHBoxLayout();
   template_kind_ = new QComboBox();
+  install_combo_popup_fix(template_kind_);
   template_kind_->addItem("GeneratedMesh (Transient Diffusion)", "generated");
   template_kind_->addItem("FileMesh (Transient Diffusion)", "filemesh");
   template_kind_->addItem("GeneratedMesh (Nonlinear Heat)", "heat_generated");
