@@ -8,6 +8,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QScrollArea>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QDialog>
@@ -23,11 +24,14 @@
 #include <QAbstractItemView>
 #include <QVBoxLayout>
 #include <QStyle>
+#include <QStyleFactory>
 #include <QKeySequence>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QFont>
 #include <QPainter>
 #include <QPainterPath>
+#include <QScreen>
 #include <QVariantMap>
 #include <QMetaType>
 #include <QSet>
@@ -35,6 +39,8 @@
 #include <QLabel>
 #include <QTextStream>
 #include <QDateTime>
+#include <functional>
+#include <vector>
 
 #include <fstream>
 #include <QFileInfo>
@@ -226,16 +232,30 @@ QIcon MakeIcon(IconGlyph glyph, int size = 18) {
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("GMP-ISE");
-  resize(1400, 900);
+  if (auto* screen = QGuiApplication::primaryScreen()) {
+    const QRect avail = screen->availableGeometry();
+    const int w = qBound(980, int(avail.width() * 0.95), avail.width() - 24);
+    const int h = qBound(380, int(avail.height() * 0.52), avail.height() - 24);
+    resize(w, h);
+    move(avail.x() + (avail.width() - width()) / 2,
+         avail.y() + (avail.height() - height()) / 2);
+  } else {
+    resize(1240, 700);
+  }
 
   build_menu();
   build_toolbar();
+  if (const auto styles = QStyleFactory::keys(); styles.contains("Fusion")) {
+    if (auto* fusion = QStyleFactory::create("Fusion")) {
+      QApplication::setStyle(fusion);
+    }
+  }
   apply_theme();
 
   auto* central = new QWidget(this);
   auto* main_layout = new QVBoxLayout(central);
-  main_layout->setContentsMargins(8, 8, 8, 8);
-  main_layout->setSpacing(6);
+  main_layout->setContentsMargins(5, 4, 5, 4);
+  main_layout->setSpacing(4);
 
   module_tabs_ = new QTabBar(central);
   module_tabs_->addTab("Part");
@@ -249,6 +269,57 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   module_tabs_->addTab("Visualization");
   main_layout->addWidget(module_tabs_);
 
+  auto make_module_page = [](const QString& title,
+                            const QString& description,
+                            const std::vector<std::pair<QString, std::function<void()>>> &buttons) {
+    auto* container = new QWidget();
+    auto* outer = new QVBoxLayout(container);
+    outer->setContentsMargins(10, 10, 10, 10);
+    outer->setSpacing(6);
+
+    auto* scroll = new QScrollArea(container);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+
+    auto* panel = new QWidget(scroll);
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(6);
+
+    auto* heading = new QLabel(title, panel);
+    QFont hfont = heading->font();
+    hfont.setPointSize(hfont.pointSize() + 3);
+    hfont.setBold(true);
+    heading->setFont(hfont);
+    layout->addWidget(heading);
+
+    auto* desc = new QLabel(description, panel);
+    desc->setWordWrap(true);
+    layout->addWidget(desc);
+
+    if (!buttons.empty()) {
+      auto* actions = new QWidget(panel);
+      auto* actions_layout = new QVBoxLayout(actions);
+      actions_layout->setContentsMargins(0, 4, 0, 4);
+      actions_layout->setSpacing(6);
+      for (const auto& button : buttons) {
+        auto* btn = new QPushButton(button.first, actions);
+        btn->setMinimumWidth(230);
+        const auto action = button.second;
+        connect(btn, &QPushButton::clicked, container,
+                [action]() { action(); });
+        actions_layout->addWidget(btn);
+      }
+      actions_layout->addStretch(1);
+      layout->addWidget(actions);
+    }
+
+    layout->addStretch(1);
+    scroll->setWidget(panel);
+    outer->addWidget(scroll, 1);
+    return container;
+  };
+
   auto* vertical_split = new QSplitter(Qt::Vertical, central);
   vertical_split->setChildrenCollapsible(false);
   main_layout->addWidget(vertical_split, 1);
@@ -260,7 +331,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   auto* tree_panel = new QWidget(main_split);
   auto* tree_layout = new QVBoxLayout(tree_panel);
   tree_layout->setContentsMargins(0, 0, 0, 0);
-  tree_layout->setSpacing(4);
+  tree_layout->setSpacing(3);
   auto* tree_actions = new QHBoxLayout();
   auto* add_btn = new QPushButton("Add");
   auto* dup_btn = new QPushButton("Duplicate");
@@ -286,10 +357,58 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   auto* center_tabs = new QTabWidget(main_split);
   viewer_ = new VtkViewer(center_tabs);
   center_tabs->addTab(viewer_, "Viewport");
-  center_tabs->addTab(new QLabel("Plot view (placeholder)", center_tabs),
-                      "Plot");
-  center_tabs->addTab(new QLabel("Table view (placeholder)", center_tabs),
-                      "Table");
+  auto* plot_page = new QWidget(center_tabs);
+  auto* plot_layout = new QVBoxLayout(plot_page);
+  plot_layout->setContentsMargins(8, 8, 8, 8);
+  plot_layout->setSpacing(6);
+  auto* plot_head = new QLabel("Plot Preview (from active dataset)", plot_page);
+  QFont plot_font = plot_head->font();
+  plot_font.setBold(true);
+  plot_head->setFont(plot_font);
+  plot_layout->addWidget(plot_head);
+  auto* plot_open_row = new QHBoxLayout();
+  auto* plot_open_btn = new QPushButton("Open Visualization", plot_page);
+  auto* plot_refresh_btn = new QPushButton("Refresh", plot_page);
+  auto* plot_help = new QLabel("Tip: full visualization is in Visualization module.", plot_page);
+  auto* plot_status = new QLabel("No data", plot_page);
+  plot_open_row->addWidget(plot_open_btn);
+  plot_open_row->addWidget(plot_refresh_btn);
+  plot_open_row->addWidget(plot_status, 1);
+  plot_open_row->addWidget(plot_help);
+  plot_layout->addLayout(plot_open_row);
+  auto* plot_view = new QPlainTextEdit(plot_page);
+  plot_view->setReadOnly(true);
+  plot_view->setLineWrapMode(QPlainTextEdit::NoWrap);
+  QFont mono;
+  mono.setFamilies({"SFMono-Regular", "Monaco", "Consolas", "Menlo"});
+  mono.setStyleHint(QFont::Monospace);
+  plot_view->setFont(mono);
+  plot_layout->addWidget(plot_view, 1);
+
+  auto* table_page = new QWidget(center_tabs);
+  auto* table_layout = new QVBoxLayout(table_page);
+  table_layout->setContentsMargins(8, 8, 8, 8);
+  table_layout->setSpacing(6);
+  auto* table_head = new QLabel("Table Preview (from active dataset)", table_page);
+  QFont table_font = table_head->font();
+  table_font.setBold(true);
+  table_head->setFont(table_font);
+  table_layout->addWidget(table_head);
+  auto* table_open_row = new QHBoxLayout();
+  auto* table_open_btn = new QPushButton("Open Visualization", table_page);
+  auto* table_refresh_btn = new QPushButton("Refresh", table_page);
+  auto* table_status = new QLabel("No data", table_page);
+  table_open_row->addWidget(table_open_btn);
+  table_open_row->addWidget(table_refresh_btn);
+  table_open_row->addWidget(table_status, 1);
+  table_layout->addLayout(table_open_row);
+  auto* table_view = new QPlainTextEdit(table_page);
+  table_view->setReadOnly(true);
+  table_view->setLineWrapMode(QPlainTextEdit::NoWrap);
+  table_view->setFont(mono);
+  table_layout->addWidget(table_view, 1);
+  center_tabs->addTab(plot_page, "Plot");
+  center_tabs->addTab(table_page, "Table");
 
   property_stack_ = new QStackedWidget(main_split);
   property_stack_->setMinimumWidth(340);
@@ -334,7 +453,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   job_table_->verticalHeader()->setVisible(false);
   job_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
   job_table_->setSelectionMode(QAbstractItemView::SingleSelection);
-  job_table_->setMinimumHeight(140);
+  job_table_->setMinimumHeight(58);
   job_info_layout->addWidget(job_table_);
   job_detail_ = new QPlainTextEdit(job_info_panel);
   job_detail_->setReadOnly(true);
@@ -346,33 +465,238 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   job_split->setStretchFactor(1, 1);
   job_layout->addWidget(job_split, 1);
 
+  auto* part_page = make_module_page(
+      "Part",
+      "Define geometric primitives and manage part-level entities. Parts are a user-facing grouping for your geometry and mesh assignments.",
+      {
+          {"Open Parts Root",
+           [this]() {
+             auto* root = find_root_item("Parts");
+             if (root) {
+               model_tree_->setCurrentItem(root);
+               root->setExpanded(true);
+             }
+           }},
+          {"New Part",
+           [this]() {
+             if (auto* root = find_root_item("Parts")) {
+               add_item_under_root(root);
+             }
+           }},
+          {"Open Gmsh Panel",
+           [this]() { module_tabs_->setCurrentIndex(6); }
+          },
+      });
+
+  auto* assembly_page = make_module_page(
+      "Assembly",
+      "Combine and instantiate parts into assembly-level units, then map mesh/topology for job-level binding.",
+      {
+          {"Open Mesh Root", [this]() {
+             if (auto* root = find_root_item("Mesh")) {
+               model_tree_->setCurrentItem(root);
+             }
+           }},
+          {"Create Assembly Alias", [this]() {
+             if (auto* root = find_root_item("Parts")) {
+               add_item_under_root(root);
+             }
+           }},
+      });
+
+  auto* step_page = make_module_page(
+      "Step",
+      "Create analysis steps, control time integration and execution options in the current model setup.",
+      {
+          {"Open Steps Root", [this]() {
+             if (auto* root = find_root_item("Steps")) {
+               model_tree_->setCurrentItem(root);
+               root->setExpanded(true);
+             }
+           }},
+          {"Add Static Step", [this]() {
+             if (auto* root = find_root_item("Steps")) {
+               const QVariantMap preset{{"type", "Static"},
+                                       {"dt", "0.0"},
+                                       {"end_time", "1.0"}};
+               add_child_item(root, "Static", "Steps", preset);
+             }
+           }},
+          {"Add Transient Step", [this]() {
+             if (auto* root = find_root_item("Steps")) {
+               const QVariantMap preset{{"type", "Transient"},
+                                       {"dt", "0.1"},
+                                       {"end_time", "1.0"}};
+               add_child_item(root, "Transient", "Steps", preset);
+             }
+           }},
+      });
+
+  auto* interaction_page = make_module_page(
+      "Interaction",
+      "Setup contact, ties, and other coupling behaviors between sets/parts.",
+      {
+          {"Open Interactions Root", [this]() {
+             if (auto* root = find_root_item("Interactions")) {
+               model_tree_->setCurrentItem(root);
+               root->setExpanded(true);
+             }
+           }},
+          {"Add Interaction", [this]() {
+             if (auto* root = find_root_item("Interactions")) {
+               add_item_under_root(root);
+             }
+           }},
+      });
+
+  auto* load_page = make_module_page(
+      "Load",
+      "Create loads, body forces, pressure and thermal sources and map them to mesh groups.",
+      {
+          {"Open Loads Root", [this]() {
+             if (auto* root = find_root_item("Loads")) {
+               model_tree_->setCurrentItem(root);
+               root->setExpanded(true);
+             }
+           }},
+          {"Add Generic Load", [this]() {
+             if (auto* root = find_root_item("Loads")) {
+               add_child_item(root, "load_1", "Loads",
+                             { {"type", "BodyForce"},
+                               {"variable", "u"},
+                               {"value", "0"} });
+             }
+           }},
+          {"Open BC Root", [this]() {
+             if (auto* root = find_root_item("BC")) {
+               model_tree_->setCurrentItem(root);
+               root->setExpanded(true);
+             }
+           }},
+      });
+
+  auto* visualization_page = make_module_page(
+      "Visualization",
+      "Use this module to inspect mesh and result output interactively. Open full controls in the viewport right panel.",
+      {
+          {"Open Visualization Tab", [center_tabs]() { center_tabs->setCurrentIndex(0); }},
+          {"Show Plot Preview", [center_tabs]() { center_tabs->setCurrentIndex(1); }},
+          {"Show Table Preview", [center_tabs]() { center_tabs->setCurrentIndex(2); }},
+      });
+
   property_stack_->addWidget(property_editor_);
+  property_stack_->addWidget(part_page);
+  property_stack_->addWidget(assembly_page);
+  property_stack_->addWidget(step_page);
+  property_stack_->addWidget(interaction_page);
+  property_stack_->addWidget(load_page);
   property_stack_->addWidget(mesh_page);
   property_stack_->addWidget(job_container);
+  property_stack_->addWidget(visualization_page);
 
   console_ = new QPlainTextEdit(vertical_split);
   console_->setReadOnly(true);
-  console_->setMinimumHeight(120);
+  console_->setMinimumHeight(46);
   console_->setPlaceholderText("Job/Message Console");
   vertical_split->addWidget(console_);
 
   vertical_split->setStretchFactor(0, 1);
-  vertical_split->setStretchFactor(1, 0);
+  vertical_split->setStretchFactor(1, 1);
   main_split->setStretchFactor(0, 0);
   main_split->setStretchFactor(1, 1);
   main_split->setStretchFactor(2, 0);
 
-  connect(module_tabs_, &QTabBar::currentChanged, this, [this](int index) {
-    if (index == 6) {
-      property_stack_->setCurrentIndex(1);
-    } else if (index == 7) {
-      property_stack_->setCurrentIndex(2);
-    } else {
-      property_stack_->setCurrentIndex(0);
+  connect(module_tabs_, &QTabBar::currentChanged, this,
+          [this](int index) {
+            int target = 0;
+            switch (index) {
+              case 0:
+                target = 1;
+                break;
+              case 1:
+                target = 0;
+                break;
+              case 2:
+                target = 2;
+                break;
+              case 3:
+                target = 3;
+                break;
+              case 4:
+                target = 4;
+                break;
+              case 5:
+                target = 5;
+                break;
+              case 6:
+                target = 6;
+                break;
+              case 7:
+                target = 7;
+                break;
+              case 8:
+                target = 7;
+                break;
+              default:
+                target = 0;
+            }
+            if (target >= 0 && target < property_stack_->count()) {
+              property_stack_->setCurrentIndex(target);
+            }
+            if (target == 0 && property_editor_) {
+              property_editor_->set_item(model_tree_->currentItem());
+            }
+          });
+  module_tabs_->setCurrentIndex(8);
+  property_stack_->setCurrentIndex(7);
+
+  const QString initial_plot = viewer_->plot_snapshot_text();
+  const QString initial_plot_stats = viewer_->plot_stats_snapshot();
+  const QString initial_table = viewer_->table_snapshot_text();
+  const QString initial_table_stats = viewer_->table_stats_snapshot();
+  plot_view->setPlainText(initial_plot);
+  plot_status->setText(initial_plot_stats);
+  table_view->setPlainText(initial_table);
+  table_status->setText(initial_table_stats);
+
+  connect(gmsh_panel_, &GmshPanel::mesh_written, plot_refresh_btn,
+          [plot_refresh_btn]() { plot_refresh_btn->click(); });
+  connect(plot_refresh_btn, &QPushButton::clicked, this, [this, plot_view, plot_status]() {
+    if (viewer_) {
+      plot_view->setPlainText(viewer_->plot_snapshot_text());
+      plot_status->setText(viewer_->plot_stats_snapshot());
     }
   });
-  module_tabs_->setCurrentIndex(6);
-  property_stack_->setCurrentIndex(1);
+  connect(table_refresh_btn, &QPushButton::clicked, this, [this, table_view, table_status]() {
+    if (viewer_) {
+      table_view->setPlainText(viewer_->table_snapshot_text());
+      table_status->setText(viewer_->table_stats_snapshot());
+    }
+  });
+  connect(gmsh_panel_, &GmshPanel::mesh_written, table_refresh_btn,
+          [table_refresh_btn]() { table_refresh_btn->click(); });
+  connect(center_tabs, &QTabWidget::currentChanged, this,
+          [this, plot_view, plot_status, table_view, table_status]() {
+            if (!viewer_) {
+              return;
+            }
+            if (plot_view) {
+              plot_view->setPlainText(viewer_->plot_snapshot_text());
+            }
+            if (plot_status) {
+              plot_status->setText(viewer_->plot_stats_snapshot());
+            }
+            if (table_view) {
+              table_view->setPlainText(viewer_->table_snapshot_text());
+            }
+            if (table_status) {
+              table_status->setText(viewer_->table_stats_snapshot());
+            }
+          });
+  connect(plot_open_btn, &QPushButton::clicked, this,
+          [this, center_tabs]() { center_tabs->setCurrentIndex(0); });
+  connect(table_open_btn, &QPushButton::clicked, this,
+          [this, center_tabs]() { center_tabs->setCurrentIndex(0); });
 
   connect(mesh_page, &GmshPanel::mesh_written, job_page,
           &MoosePanel::set_mesh_path);
@@ -830,9 +1154,38 @@ QComboBox QAbstractItemView {
   selection-color: #111;
   outline: 0;
 }
+QComboBox {
+  min-height: 24px;
+  min-width: 84px;
+  padding: 2px 24px 2px 8px;
+  text-align: left;
+}
+QComboBox::down-arrow {
+  image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxNycgaGVpZ2h0PScxNycgdmlld0JveD0nMCAwIDE3IDE3Jz48cG9seWdvbiBwb2ludHM9JzMsNSAxMyw1IDgsMTEnIGZpbGw9JyM0NDQnLz48L3N2Zz4=");
+  width: 8px;
+  height: 10px;
+}
+QComboBox::down-arrow:on {
+  image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxNycgaGVpZ2h0PScxNycgdmlld0JveD0nMCAwIDE3IDE3Jz48cG9seWdvbiBwb2ludHM9JzMsNSAxMyw1IDgsMTEnIGZpbGw9JyMyMjInLz48L3N2Zz4=");
+  width: 8px;
+  height: 10px;
+}
+QComboBox::drop-down {
+  subcontrol-origin: padding;
+  subcontrol-position: right center;
+  width: 24px;
+  border-left: 1px solid #b5b5b5;
+}
 QComboBox QAbstractItemView::item:hover {
   background: #cfe1ff;
   color: #111;
+}
+QComboBox QAbstractItemView::item:selected {
+  background: #98c1ff;
+  color: #111;
+}
+QComboBox QAbstractItemView::item {
+  min-height: 18px;
 }
 QTreeView::item { padding: 4px 6px; }
 QTreeView::item:selected { background: #cfe1ff; color: #111; }

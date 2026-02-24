@@ -63,6 +63,10 @@ class VtkViewer : public QWidget {
   void set_mesh_entity_filter(int dim, int tag);
   QVariantMap viewer_settings() const;
   void apply_viewer_settings(const QVariantMap& settings);
+  QString plot_snapshot_text() const;
+  QString plot_stats_snapshot() const;
+  QString table_snapshot_text() const;
+  QString table_stats_snapshot() const;
 
 signals:
   void mesh_group_picked(int dim, int tag);
@@ -167,10 +171,14 @@ signals:
   QCheckBox* vector_auto_sync_deform_ = nullptr;
   QPushButton* vector_apply_to_deform_ = nullptr;
   QLabel* vector_info_ = nullptr;
-  QPlainTextEdit* plot_view_ = nullptr;
+ QPlainTextEdit* plot_view_ = nullptr;
+  QString cached_plot_text_;
+  QString cached_plot_stats_;
   QPushButton* plot_refresh_btn_ = nullptr;
   QLabel* plot_stats_ = nullptr;
   QTableWidget* table_view_ = nullptr;
+  QString cached_table_text_;
+  QString cached_table_stats_;
   QSpinBox* table_rows_spin_ = nullptr;
   QPushButton* table_refresh_btn_ = nullptr;
   QLabel* table_stats_ = nullptr;

@@ -3,11 +3,14 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QGuiApplication>
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QFontMetrics>
 #include <QHeaderView>
+#include <QScreen>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListView>
@@ -390,36 +393,153 @@ vtkSmartPointer<vtkUnstructuredGrid> BuildGridFromGmsh(
 
 class ComboPopupFixer : public QObject {
  public:
-  explicit ComboPopupFixer(QComboBox* combo) : QObject(combo), combo_(combo) {}
+  explicit ComboPopupFixer(QComboBox* combo) : QObject(combo), combo_(combo) {
+    if (combo_) {
+      combo_->installEventFilter(this);
+    }
+  }
+
+  void ensure_filter() {
+    if (!combo_ || !combo_->view()) {
+      return;
+    }
+    if (auto* popup = combo_->view()->window()) {
+      popup->installEventFilter(this);
+    } else {
+      combo_->view()->installEventFilter(this);
+    }
+  }
 
  protected:
   bool eventFilter(QObject* obj, QEvent* event) override {
     if (!combo_) {
       return QObject::eventFilter(obj, event);
     }
-    if (event->type() == QEvent::Show || event->type() == QEvent::ShowToParent) {
-      auto* w = qobject_cast<QWidget*>(obj);
-      if (w) {
-        const QPoint pos = combo_->mapToGlobal(QPoint(0, combo_->height()));
-        w->move(pos);
-        int width = combo_->width();
-        if (auto* view = combo_->view()) {
-          const int hint = view->sizeHintForColumn(0);
-          if (hint > 0) {
-            width = std::max(width, hint + 40);
-          }
-          width = std::max(width, combo_->minimumWidth());
-          width = std::max(width, 120);
-          view->setMinimumWidth(width);
-          view->setFixedWidth(width);
-        }
-        w->resize(width, w->height());
+    if (event->type() == QEvent::Show || event->type() == QEvent::ShowToParent ||
+        event->type() == QEvent::MouseButtonPress ||
+        event->type() == QEvent::MouseButtonRelease ||
+        event->type() == QEvent::Move || event->type() == QEvent::Resize ||
+        event->type() == QEvent::FocusIn) {
+      QWidget* view = combo_->view();
+      QWidget* popup = view ? view->window() : nullptr;
+      if (obj == combo_ || obj == view || obj == popup) {
+        ensure_filter();
+        QTimer::singleShot(0, this, [this]() { apply_popup_geometry(0); });
       }
     }
     return QObject::eventFilter(obj, event);
   }
 
  private:
+  void apply_popup_geometry(int attempt) {
+    if (!combo_ || !combo_->view()) {
+      return;
+    }
+    QWidget* popup = combo_->view()->window();
+    if (!popup) {
+      return;
+    }
+    if (combo_->height() <= 0 || combo_->width() <= 0) {
+      if (attempt < 4) {
+        QTimer::singleShot(10, this, [this, attempt]() {
+          apply_popup_geometry(attempt + 1);
+        });
+      }
+      return;
+    }
+
+    int width = combo_->width();
+    if (auto* view = combo_->view()) {
+      const int margin = 20;
+      int hint_width = view->sizeHintForColumn(0);
+      if (hint_width < 0) {
+        hint_width = 0;
+      }
+      int max_row_width = 0;
+      const QFontMetrics fm(view->font());
+      if (auto* model = view->model()) {
+        for (int i = 0; i < model->rowCount(); ++i) {
+          const QModelIndex idx = model->index(i, 0);
+          const QString text = model->data(idx, Qt::DisplayRole).toString();
+          const int row_w = fm.horizontalAdvance(text) + margin;
+          if (row_w > max_row_width) {
+            max_row_width = row_w;
+          }
+        }
+      }
+      width = std::max(width, std::max(hint_width, max_row_width) + margin);
+      width = std::max(width, combo_->minimumWidth());
+      width = std::max(width, 220);
+      view->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+      view->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+      view->setTextElideMode(Qt::ElideNone);
+    }
+
+    const QPoint origin =
+        combo_->mapToGlobal(QPoint(0, combo_->height() + 1));
+    const QSize hint = popup->sizeHint();
+    int popup_h = hint.height();
+    if (popup_h <= 0) {
+      popup_h = popup->height();
+    }
+    int popup_row_h = 16;
+    int popup_rows = 1;
+    if (auto* view = combo_->view()) {
+      const int row_hint = view->sizeHintForRow(0);
+      if (row_hint > 0) {
+        popup_row_h = row_hint;
+      }
+      if (auto* model = view->model()) {
+        popup_rows = qMax(1, model->rowCount());
+      }
+    }
+    const int min_popup_h = popup_row_h * qMin(popup_rows, 6) + 6;
+    if (popup_h < min_popup_h) {
+      popup_h = min_popup_h;
+    }
+    int popup_w = hint.width();
+    if (popup_w < width) {
+      popup_w = width;
+    }
+
+    if (const QScreen* screen = QGuiApplication::screenAt(origin)) {
+      const QRect geo = screen->availableGeometry();
+      popup_w = qMin(popup_w, std::max(220, geo.width() - 12));
+      width = qMin(width, popup_w);
+
+      int x = origin.x();
+      int y = origin.y();
+      if (x + popup_w > geo.right()) {
+        x = std::max(geo.left(), geo.right() - popup_w + 1);
+      }
+      const int max_popup_h = std::max(120, geo.bottom() - y - 1);
+      if (popup_h > max_popup_h) {
+        popup_h = max_popup_h;
+      }
+      const QRect target_geo(x, y, popup_w, popup_h);
+      if (popup->geometry() != target_geo) {
+        popup->setGeometry(target_geo);
+      }
+      popup->setGeometry(target_geo);
+      popup->setMinimumSize(popup_w, popup_h);
+      popup->setMaximumSize(popup_w, popup_h);
+      if (auto* view = combo_->view()) {
+        view->setMinimumWidth(popup_w);
+      }
+    } else {
+      const QRect target_geo(origin.x(), origin.y(), popup_w, popup_h);
+      if (popup->geometry() != target_geo) {
+        popup->setGeometry(target_geo);
+      }
+      popup->setGeometry(target_geo);
+      popup->setMinimumSize(popup_w, popup_h);
+      popup->setMaximumSize(popup_w, popup_h);
+      if (auto* view = combo_->view()) {
+        view->setMinimumWidth(popup_w);
+      }
+    }
+  }
+
   QComboBox* combo_ = nullptr;
 };
 
@@ -430,12 +550,8 @@ void AttachComboPopupFix(QComboBox* combo) {
   auto* view = new QListView(combo);
   view->setUniformItemSizes(true);
   combo->setView(view);
-  auto* popup = combo->view()->window();
-  if (popup) {
-    popup->installEventFilter(new ComboPopupFixer(combo));
-  } else {
-    combo->view()->installEventFilter(new ComboPopupFixer(combo));
-  }
+  auto* popup = new ComboPopupFixer(combo);
+  popup->ensure_filter();
 }
 
 }  // namespace
@@ -985,7 +1101,7 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
   plot_font.setStyleHint(QFont::Monospace);
   plot_font.setPointSize(10);
   plot_view_->setFont(plot_font);
-  plot_view_->setMinimumHeight(160);
+  plot_view_->setMinimumHeight(96);
   plot_layout->addWidget(plot_view_, 1);
   connect(plot_refresh_btn_, &QPushButton::clicked, this,
           &VtkViewer::update_plot_view);
@@ -1013,7 +1129,7 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
       QHeaderView::ResizeToContents);
   table_view_->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
   table_view_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-  table_view_->setMinimumHeight(160);
+  table_view_->setMinimumHeight(96);
   table_layout->addWidget(table_view_, 1);
   connect(table_rows_spin_, QOverload<int>::of(&QSpinBox::valueChanged), this,
           &VtkViewer::update_table_view);
@@ -1022,7 +1138,7 @@ VtkViewer::VtkViewer(QWidget* parent) : QWidget(parent) {
 
 #ifdef GMP_ENABLE_VTK_VIEWER
   vtk_widget_ = new QVTKOpenGLNativeWidget(right_panel);
-  vtk_widget_->setMinimumSize(640, 480);
+  vtk_widget_->setMinimumSize(360, 220);
   right_layout->addWidget(vtk_widget_, 1);
   QTimer::singleShot(0, this, [this]() { init_vtk(); });
 #else
@@ -1612,6 +1728,22 @@ bool VtkViewer::save_screenshot(const QString& path) {
   return pix.save(path);
 }
 
+QString VtkViewer::plot_snapshot_text() const {
+  return cached_plot_text_;
+}
+
+QString VtkViewer::plot_stats_snapshot() const {
+  return cached_plot_stats_;
+}
+
+QString VtkViewer::table_snapshot_text() const {
+  return cached_table_text_;
+}
+
+QString VtkViewer::table_stats_snapshot() const {
+  return cached_table_stats_;
+}
+
 void VtkViewer::on_reload() {
   if (!current_file_.isEmpty()) {
     load_file(current_file_);
@@ -2083,9 +2215,13 @@ void VtkViewer::update_plot_view() {
       plot_stats_->setText("vtk disabled");
     }
   }
+  cached_plot_text_ = QString::fromUtf8("vtk disabled");
+  cached_plot_stats_ = QString::fromUtf8("vtk disabled");
   return;
 #endif
   if (!plot_view_) {
+    cached_plot_text_ = QString::fromUtf8("No plot widget");
+    cached_plot_stats_ = QString::fromUtf8("No plot widget");
     return;
   }
   vtkDataSet* data = nullptr;
@@ -2107,6 +2243,8 @@ void VtkViewer::update_plot_view() {
     if (plot_stats_) {
       plot_stats_->setText("No data");
     }
+    cached_plot_text_ = QString::fromUtf8("No data");
+    cached_plot_stats_ = QString::fromUtf8("No data");
     return;
   }
 
@@ -2122,6 +2260,8 @@ void VtkViewer::update_plot_view() {
     if (plot_stats_) {
       plot_stats_->setText("No array selected");
     }
+    cached_plot_text_ = QString::fromUtf8("No array selected");
+    cached_plot_stats_ = QString::fromUtf8("No array selected");
     return;
   }
 
@@ -2142,6 +2282,8 @@ void VtkViewer::update_plot_view() {
     if (plot_stats_) {
       plot_stats_->setText("Invalid array");
     }
+    cached_plot_text_ = QString::fromUtf8("Selected array not found");
+    cached_plot_stats_ = QString::fromUtf8("Invalid array");
     return;
   }
 
@@ -2201,6 +2343,8 @@ void VtkViewer::update_plot_view() {
                                                                               : "exodus")
                                                   .arg(tuples));
   }
+  cached_plot_text_ = lines.join('\n');
+  cached_plot_stats_ = plot_stats_ ? plot_stats_->text() : QString("No stats");
 }
 
 void VtkViewer::update_table_view() {
@@ -2211,9 +2355,13 @@ void VtkViewer::update_table_view() {
       table_stats_->setText("vtk disabled");
     }
   }
+  cached_table_text_ = QString::fromUtf8("vtk disabled");
+  cached_table_stats_ = QString::fromUtf8("vtk disabled");
   return;
 #endif
   if (!table_view_) {
+    cached_table_text_ = QString::fromUtf8("No table widget");
+    cached_table_stats_ = QString::fromUtf8("No table widget");
     return;
   }
   vtkDataSet* data = nullptr;
@@ -2235,6 +2383,8 @@ void VtkViewer::update_table_view() {
     if (table_stats_) {
       table_stats_->setText("No data");
     }
+    cached_table_text_ = QString::fromUtf8("No data");
+    cached_table_stats_ = QString::fromUtf8("No data");
     return;
   }
 
@@ -2250,6 +2400,8 @@ void VtkViewer::update_table_view() {
     if (table_stats_) {
       table_stats_->setText("No array selected");
     }
+    cached_table_text_ = QString::fromUtf8("No array selected");
+    cached_table_stats_ = QString::fromUtf8("No array selected");
     return;
   }
 
@@ -2270,6 +2422,8 @@ void VtkViewer::update_table_view() {
     if (table_stats_) {
       table_stats_->setText("Invalid array");
     }
+    cached_table_text_ = QString::fromUtf8("Invalid array");
+    cached_table_stats_ = QString::fromUtf8("Invalid array");
     return;
   }
 
@@ -2311,6 +2465,25 @@ void VtkViewer::update_table_view() {
     }
   }
   table_view_->resizeColumnsToContents();
+  QStringList text_rows;
+  text_rows << QString("Array: %1").arg(key);
+  text_rows << QString("Tuples: %1").arg(tuples);
+  text_rows << QString("Showing rows: %1").arg(rows);
+  text_rows << "";
+  text_rows << headers.join('\t');
+  for (vtkIdType i = 0; i < rows; ++i) {
+    QStringList row_text;
+    row_text << QString::number(i);
+    for (int c = 0; c < table_view_->columnCount() - 1; ++c) {
+      auto* item = table_view_->item(static_cast<int>(i), c);
+      row_text << (item ? item->text() : QString());
+    }
+    text_rows << row_text.join('\t');
+  }
+  if (tuples > rows) {
+    text_rows << QString("... omitted %1 rows ...").arg(tuples - rows);
+  }
+  cached_table_text_ = text_rows.join('\n');
   if (table_stats_) {
     if (comps > 1) {
       VectorStats stats = AnalyzeVectorArray(array);
@@ -2336,6 +2509,7 @@ void VtkViewer::update_table_view() {
               .arg(comps));
     }
   }
+  cached_table_stats_ = table_stats_ ? table_stats_->text() : QString("No stats");
 }
 
 void VtkViewer::update_vector_list() {

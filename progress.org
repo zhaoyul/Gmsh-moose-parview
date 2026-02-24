@@ -1,7 +1,7 @@
 * Abaqus-Like UI Refactor Plan
 ** Status
    - Overall: In Progress
-   - Last Update: 2026-02-21
+   - Last Update: 2026-02-24
 
 ** Goals
    - Provide an Abaqus-like user experience for model setup, solve, and post-processing.
@@ -169,6 +169,20 @@
    - Make the app feel like a complete simulation suite with robust job control and results exploration.
    - UI changes are explicit and prioritized.
 
+** Module Tab Completion (Current Gaps)
+   - [ ] Make top module tabs functionally complete (currently Part/Assembly/Step/Interaction/Load/Visualization/Results are still partial or placeholder-driven).
+   - [ ] Add module-specific right-pane pages:
+     - [ ] Part: dedicated creation/selection page and part metadata quick actions.
+     - [ ] Property: keep binding and expose module-sensitive helpers (copy/paste/templates/validation).
+     - [ ] Assembly: groups, instance naming, visibility and transforms integration.
+     - [ ] Step: step execution settings, output hooks, and sequencing preview.
+     - [ ] Interaction: interaction/constraint registry and editing actions.
+     - [ ] Load: load presets, bulk creation, and reuse by group.
+     - [ ] Visualization: currently mapped to existing VTK result tabs; remove/replace any dead placeholder surfaces.
+     - [ ] Results: output dataset selector + quick open of `.e`/`csv`/`txt` summaries.
+   - [ ] Map all module tabs in `MainWindow` explicitly (remove generic fallback behavior).
+   - [ ] Replace center tab placeholders (`Plot view` / `Table view`) with functional content pages and link to result outputs.
+
 ** Phase 1: Project + Session UX
    - UI: Add project path + dirty indicator in window title and status bar.
    - UI: Add File menu items: Recent Projects, Export Debug Bundle.
@@ -230,3 +244,26 @@
    - Visualization: Added plot/table data preview and adjustable row count, with persisted settings.
    - VTK: Plot/Table/Vector panes now refresh automatically on time/array/file updates.
    - Job Manager: Added job history table, controls, and detail panel.
+   - UI polish: Fixed QComboBox popup width/position and hover rendering issues in toolbars/property panels to keep dropdowns usable.
+   - UI layout/UX: Reduced default main window height footprint and vertical panel minima; dropdowns now reserve room for arrow marker and keep 2D/3D form entries more compact for single-screen fitting.
+** Progress Update (2026-02-24)
+   - Main window: reduced startup height and tightened global content spacing to improve single-screen fit.
+   - Dropdown UX: restored explicit down-arrow rendering and adjusted popup placement/sizing.
+   - Popup now uses content-aware width calculation and opens below the editor, with width constrained to available screen space.
+   - Added deferred geometry recalculation + retry logic (`show/resize/move`) for stable first-frame placement.
+   - Improved combo item visibility by disabling text elision and expanding popup min width.
+   - Added inline down-arrow glyph in stylesheet for consistent arrow visibility across platforms.
+   - Lowered minima (`Plot`/`Table`/`VTK`/`Console`/Job table) to reduce vertical overflow on smaller displays.
+   - Gmsh panel: aligned entity/dimension combo boxes with shared popup fixer (position clamp below control and full item width).
+   - Gmsh panel: tuned combo sizing to keep arrow area visible on compact rows.
+   - Gmsh panel: applied popup width fixes to physical group/mesh/primitive controls to avoid clipped entries.
+** Progress Update (2026-02-24)
+   - UI polish pass for open issues:
+     1) 强制下拉箭头使用可兼容形状渲染（避免无图标平台失效）。
+     2) 强化 `QComboBox` 弹出列表的重排触发：`Show/ShowToParent/Move/Resize/Mouse/FoucsIn`，并强制设置弹窗在输入框下沿展开。
+     3) 增强弹窗宽度策略：按最长条目重算并固定可见宽度，避免只看到短内容；启用水平滚动条不截断文本。
+     4) 进一步降低中部视口/面板默认最小高度与主窗口初始高度，避免窗口整体偏高导致单屏无法完整显示。
+** Progress Update (2026-02-24)
+   - 下拉箭头修复：更新为正确的 inline SVG glyph，恢复所有平台的箭头可见性。
+   - 弹窗高度修复：为 `QComboBox` 弹出列表添加基于行高/行数的最小高度保护，避免“几像素”级高度塌陷（单项看不到完整列表）。
+   - 生成后续建议：请复测 `Gmsh`/`VTK` 与 `Property` 区域内每个下拉框的箭头与下拉项高度是否恢复正常；仍异常可按 combo 名称补充针对性修复。

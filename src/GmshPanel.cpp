@@ -14,18 +14,24 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListView>
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QScreen>
 #include <QSet>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QAbstractItemView>
+#include <QGuiApplication>
+#include <QModelIndex>
+#include <QObject>
 #include <QString>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <set>
@@ -36,6 +42,186 @@
 #ifdef GMP_ENABLE_GMSH_GUI
 #include <gmsh.h>
 #endif
+
+namespace {
+
+class GmshComboPopupFixer : public QObject {
+ public:
+  explicit GmshComboPopupFixer(QComboBox* combo) : QObject(combo), combo_(combo) {
+    if (combo_) {
+      combo_->installEventFilter(this);
+    }
+  }
+
+  void ensure_filter() {
+    if (!combo_ || !combo_->view()) {
+      return;
+    }
+    if (auto* popup = combo_->view()->window()) {
+      popup->installEventFilter(this);
+    } else {
+      combo_->view()->installEventFilter(this);
+    }
+  }
+
+ protected:
+  bool eventFilter(QObject* obj, QEvent* event) override {
+    if (!combo_) {
+      return QObject::eventFilter(obj, event);
+    }
+    if (event->type() == QEvent::Show || event->type() == QEvent::ShowToParent ||
+        event->type() == QEvent::MouseButtonPress ||
+        event->type() == QEvent::MouseButtonRelease ||
+        event->type() == QEvent::Move || event->type() == QEvent::Resize ||
+        event->type() == QEvent::FocusIn) {
+      QWidget* view = combo_->view();
+      QWidget* popup = view ? view->window() : nullptr;
+      if (obj == combo_ || obj == view || obj == popup) {
+        ensure_filter();
+        QTimer::singleShot(0, this, [this]() { apply_popup_geometry(0); });
+      }
+    }
+    return QObject::eventFilter(obj, event);
+  }
+
+ private:
+  void apply_popup_geometry(int attempt) {
+    if (!combo_ || !combo_->view()) {
+      return;
+    }
+    QWidget* popup = combo_->view()->window();
+    if (!popup) {
+      return;
+    }
+    if (combo_->height() <= 0 || combo_->width() <= 0) {
+      if (attempt < 4) {
+        QTimer::singleShot(10, this, [this, attempt]() {
+          apply_popup_geometry(attempt + 1);
+        });
+      }
+      return;
+    }
+
+    int width = combo_->width();
+    if (auto* view = combo_->view()) {
+      const int margin = 20;
+      int hint_width = view->sizeHintForColumn(0);
+      if (hint_width < 0) {
+        hint_width = 0;
+      }
+      int max_row_width = 0;
+      const QFontMetrics fm(view->font());
+      if (auto* model = view->model()) {
+        for (int i = 0; i < model->rowCount(); ++i) {
+          const QModelIndex idx = model->index(i, 0);
+          const QString text = model->data(idx, Qt::DisplayRole).toString();
+          const int row_w = fm.horizontalAdvance(text) + margin;
+          if (row_w > max_row_width) {
+            max_row_width = row_w;
+          }
+        }
+      }
+      width = std::max(width, std::max(hint_width, max_row_width));
+      width = std::max(width, combo_->minimumWidth());
+      width = std::max(width, 160);
+      view->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+      view->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+      view->setTextElideMode(Qt::ElideNone);
+    }
+
+    const QPoint origin =
+        combo_->mapToGlobal(QPoint(0, combo_->height() + 1));
+    const QSize hint = popup->sizeHint();
+    int popup_h = hint.height();
+    if (popup_h <= 0) {
+      popup_h = popup->height();
+    }
+    int popup_row_h = 16;
+    int popup_rows = 1;
+    if (auto* view = combo_->view()) {
+      const int row_hint = view->sizeHintForRow(0);
+      if (row_hint > 0) {
+        popup_row_h = row_hint;
+      }
+      if (auto* model = view->model()) {
+        popup_rows = qMax(1, model->rowCount());
+      }
+    }
+    const int min_popup_h = popup_row_h * qMin(popup_rows, 6) + 6;
+    if (popup_h < min_popup_h) {
+      popup_h = min_popup_h;
+    }
+    int popup_w = hint.width();
+    if (popup_w < width) {
+      popup_w = width;
+    }
+
+    if (const QScreen* screen = QGuiApplication::screenAt(origin)) {
+      const QRect geo = screen->availableGeometry();
+      popup_w = qMin(popup_w, std::max(180, geo.width() - 12));
+      width = qMin(width, popup_w);
+
+      int x = origin.x();
+      int y = origin.y();
+      if (x + popup_w > geo.right()) {
+        x = std::max(geo.left(), geo.right() - popup_w + 1);
+      }
+      const int max_popup_h = std::max(90, geo.bottom() - y - 1);
+      if (popup_h > max_popup_h) {
+        popup_h = max_popup_h;
+      }
+      const QRect target_geo(x, y, popup_w, popup_h);
+      if (popup->geometry() != target_geo) {
+        popup->setGeometry(target_geo);
+      }
+      popup->setGeometry(target_geo);
+      popup->setMinimumSize(popup_w, popup_h);
+      popup->setMaximumSize(popup_w, popup_h);
+      if (auto* view = combo_->view()) {
+        view->setMinimumWidth(popup_w);
+      }
+    } else {
+      const QRect target_geo(origin.x(), origin.y(), popup_w, popup_h);
+      if (popup->geometry() != target_geo) {
+        popup->setGeometry(target_geo);
+      }
+      popup->setGeometry(target_geo);
+      popup->setMinimumSize(popup_w, popup_h);
+      popup->setMaximumSize(popup_w, popup_h);
+      if (auto* view = combo_->view()) {
+        view->setMinimumWidth(popup_w);
+      }
+    }
+  }
+
+  QComboBox* combo_ = nullptr;
+};
+
+void attach_gmsh_combo_popup_fix(QComboBox* combo) {
+  if (!combo || combo->property("_gmp_combo_popup_fix").toBool()) {
+    return;
+  }
+  combo->setProperty("_gmp_combo_popup_fix", true);
+  auto* view = new QListView(combo);
+  view->setUniformItemSizes(true);
+  combo->setView(view);
+  auto* popup = new GmshComboPopupFixer(combo);
+  popup->ensure_filter();
+}
+
+void tune_gmsh_combo(QComboBox* combo, int min_width = 80, int view_min_width = 120) {
+  if (!combo) {
+    return;
+  }
+  combo->setMinimumWidth(min_width);
+  combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+  if (combo->view()) {
+    combo->view()->setMinimumWidth(view_min_width);
+  }
+  attach_gmsh_combo_popup_fix(combo);
+}
+
+}  // namespace
 
 namespace gmp {
 
@@ -53,14 +239,7 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
     edit->installEventFilter(this);
   };
   auto tune_dim_combo = [](QComboBox* combo) {
-    if (!combo) {
-      return;
-    }
-    combo->setMinimumWidth(70);
-    combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-    if (combo->view()) {
-      combo->view()->setMinimumWidth(90);
-    }
+    tune_gmsh_combo(combo, 70, 120);
   };
 
   auto* title = new QLabel("Gmsh Panel");
@@ -725,6 +904,19 @@ GmshPanel::GmshPanel(QWidget* parent) : QWidget(parent) {
   content_layout->addStretch(1);
   scroll->setWidget(content);
   layout->addWidget(scroll, 1);
+
+  tune_gmsh_combo(primitive_kind_, 90, 180);
+  tune_gmsh_combo(transform_dim_, 90, 120);
+  tune_gmsh_combo(boolean_dim_, 90, 120);
+  tune_gmsh_combo(phys_group_list_, 220, 240);
+  tune_gmsh_combo(phys_group_dim_, 70, 120);
+  tune_gmsh_combo(field_dim_, 70, 120);
+  tune_gmsh_combo(entity_size_dim_, 70, 120);
+  tune_gmsh_combo(elem_order_, 140, 160);
+  tune_gmsh_combo(high_order_opt_, 220, 240);
+  tune_gmsh_combo(msh_version_, 110, 140);
+  tune_gmsh_combo(algo2d_, 150, 180);
+  tune_gmsh_combo(algo3d_, 150, 180);
 
   append_log("Gmsh panel ready.");
 #ifndef GMP_ENABLE_GMSH_GUI
