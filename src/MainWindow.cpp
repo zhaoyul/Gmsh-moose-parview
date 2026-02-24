@@ -8,6 +8,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QComboBox>
 #include <QScrollArea>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -609,10 +610,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   auto* results_refresh = new QPushButton("Refresh List", results_page);
   auto* results_open_view = new QPushButton("Open in Viewer", results_page);
   auto* results_open_text = new QPushButton("Open as Text", results_page);
+  auto* results_filter_label = new QLabel("Type", results_page);
+  results_type_filter_ = new QComboBox(results_page);
+  results_type_filter_->addItem("All", "all");
+  results_type_filter_->addItem("Solver (.e/.exo)", "e");
+  results_type_filter_->addItem("Mesh (.msh)", "msh");
+  results_type_filter_->addItem("Text (.txt/.csv/.log/.yaml/.yml)", "txt");
   results_actions->addWidget(results_open_root);
   results_actions->addWidget(results_refresh);
   results_actions->addWidget(results_open_view);
   results_actions->addWidget(results_open_text);
+  results_actions->addStretch(1);
+  results_actions->addWidget(results_filter_label);
+  results_actions->addWidget(results_type_filter_);
   results_actions->addStretch(1);
   auto* results_actions_row = new QWidget(results_page);
   results_actions_row->setLayout(results_actions);
@@ -639,6 +649,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(results_open_root, &QPushButton::clicked, this,
           open_results_root);
   connect(results_refresh, &QPushButton::clicked, this,
+          [this]() { refresh_results_panel(); });
+  connect(results_type_filter_,
+          &QComboBox::currentTextChanged,
+          this,
           [this]() { refresh_results_panel(); });
   connect(results_open_view, &QPushButton::clicked, this,
           [this, center_tabs]() {
@@ -1533,6 +1547,10 @@ void MainWindow::refresh_results_panel() {
   }
   results_list_->clear();
   results_preview_->clear();
+  QString filter_ext = "all";
+  if (results_type_filter_) {
+    filter_ext = results_type_filter_->currentData().toString();
+  }
 
   auto* root = find_root_item("Results");
   if (!root || root->childCount() == 0) {
@@ -1551,6 +1569,21 @@ void MainWindow::refresh_results_panel() {
     const QVariantMap params =
         item->data(0, PropertyEditor::kParamsRole).toMap();
     const QString path = params.value("path").toString();
+    const QString ext = QFileInfo(path).suffix().toLower();
+    bool should_include = true;
+    if (filter_ext != "all" && !path.isEmpty()) {
+      if (filter_ext == "e") {
+        should_include = (ext == "e" || ext == "exo" || ext == "exodus");
+      } else if (filter_ext == "msh") {
+        should_include = (ext == "msh");
+      } else if (filter_ext == "txt") {
+        should_include = (ext == "txt" || ext == "csv" || ext == "log" ||
+                          ext == "yaml" || ext == "yml");
+      }
+    }
+    if (!should_include) {
+      continue;
+    }
     const QString status = params.value("status").toString();
     const QString job = params.value("job").toString();
     QString text = name;

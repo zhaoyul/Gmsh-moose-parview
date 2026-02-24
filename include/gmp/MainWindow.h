@@ -7,6 +7,7 @@ class QPlainTextEdit;
 class QAction;
 class QStackedWidget;
 class QTabBar;
+class QComboBox;
 class QListWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -83,6 +84,7 @@ class MainWindow : public QMainWindow {
   QPlainTextEdit* job_detail_ = nullptr;
   QListWidget* results_list_ = nullptr;
   QPlainTextEdit* results_preview_ = nullptr;
+  QComboBox* results_type_filter_ = nullptr;
   QString project_path_;
   bool project_dirty_ = false;
   bool suppress_dirty_ = false;

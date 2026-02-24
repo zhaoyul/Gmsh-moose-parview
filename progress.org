@@ -304,3 +304,9 @@
      - `QFormLayout` 清理逻辑改为基于 `count()` 的安全迭代，防止 `QFormLayout::takeAt` 越界警告。
      - `GmshPanel::on_physical_group_selected` 在执行 `gmsh::model::*` 查询前增加 `ensure_gmsh()` 与 readiness 检查，避免“Gmsh has not been initialized”报错。
    - 编译与回归：`cmake --build build -j4` 通过。
+** Progress Update (2026-02-24)
+   - 结果管理页面功能增强：
+     - 在 `Results` 页新增输出类型筛选（All / Solver / Mesh / Text）。
+     - 筛选会按 `results_list_` 文件扩展名实时过滤（.e/.exo、.msh、.txt/.csv/.log/.yaml/.yml）。
+     - 现有 `Open in Viewer`/`Open as Text` 行为继续沿用，兼容扩展过滤后的列表。
+   - 编译与回归：`cmake --build build -j4` 通过。
