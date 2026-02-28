@@ -23,6 +23,33 @@
 * MOOSE 建议以 *独立进程* 运行 (MPI 需要), UI 仅负责调度与监控.
 * ParaView 可先以 VTK 渲染结果, 后续再引入 Catalyst 原位分析.
 
+* Abaqus 风格使用方式（目标）
+  你要的“像 Abaqus”的体验，我们按下面这套流程对齐，当前功能已经覆盖主干:
+1. 几何与物理量定义：在 *Part* 创建/管理几何对象，在 *Property* 定义 Materials / Sections / BC/Loads 参数模板，在 Model Tree 的 *Materials / Sections* 节点补充材料与截面参数。
+2. 装配与约束关系：在 *Assembly* 做对象组合与可见性控制，在 *Interaction* 添加约束/耦合关系。
+3. 分析设置：在 *Step* 定义稳态/瞬态序列，在 *Load* 里配置载荷与边界条件（BC 在模型树 BC 分支，可从 Load 页面一键跳转）。
+4. 网格与求解：在 *Mesh* 设置生成维度（2D/3D）、算法、场和大小策略，生成网格后立即同步预览到视图。
+5. 求解与结果：在 *Job* 启动作业并查看日志状态，在 *Results* 刷新输出列表，双击打开可视化或文本预览，在 *Visualization* 继续做字段/切片/变形/图表检查。
+
+  这套流程对应 Abaqus 的主线：*Part -> Materials/Sections -> Assembly -> Step -> BC/Load -> Mesh -> Job -> Results*，当前实现已覆盖大部分节点，后续重点是名称与操作流的最终一致性。
+
+* Abaqus 体验对照与待增强项
+1. 对照关系：Model Tree 已具备 Parts/Materials/Sections/BC/Loads/Steps/Mesh/Job/Results，模块页已覆盖 Part/Assembly/Step/Interaction/Load/Mesh/Job/Visualization/Results，结果路径已联通图形/文本/表格浏览。
+2. 待增强（按 Abaqus 体验）：在顶部模块增加独立 *Material* / *Section* 快速入口页，左树增加“流程检查清单”（Part 已建/Step 已配/BC 已设置），将常用动作合并为统一按钮组（New Part / New Material / New Section / Mesh 3D / Submit Job），在 Job/Results 增加“一步生成并提交”联动。
+
+* 一步提交（推荐）
+  - 若要快速体验整条链路，可在 *Mesh* 或 *Job* 模块页使用：
+    - *Prepare Workflow Defaults*（补齐最小流程节点）
+    - *Generate & Submit*（Mesh）或 *Submit (Mesh + Sync + Run)*（Job）
+  - 流程会：
+    1. 自动补齐空缺的最小模型节点（Part/Material/Section/Step/边界/载荷）；
+    2. 自动回填可用 mesh（无则尝试 3D 生成）；
+    3. 同步 Model Tree 到 MOOSE 输入；
+    4. 一步触发求解运行；
+    5. 结果会自动出现在 *Results* 与可视化路径。
+
+  这份对照会持续写入 progress.org，便于每个迭代核对“是否更像 Abaqus”。
+
 * 技术路线选择
 ** 1. UI 框架: Qt (C++)
 选择 Qt 而非 Web/Electron 的核心理由:

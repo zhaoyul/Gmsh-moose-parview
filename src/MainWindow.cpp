@@ -9,6 +9,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QComboBox>
+#include <QSizePolicy>
 #include <QScrollArea>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -19,6 +20,7 @@
 #include <QStatusBar>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QFrame>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QToolBar>
@@ -237,12 +239,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   if (auto* screen = QGuiApplication::primaryScreen()) {
     const QRect avail = screen->availableGeometry();
     const int w = qBound(980, int(avail.width() * 0.95), avail.width() - 24);
-    const int h = qBound(380, int(avail.height() * 0.52), avail.height() - 24);
+    const int h = qBound(700, int(avail.height() * 0.85), avail.height() - 24);
     resize(w, h);
     move(avail.x() + (avail.width() - width()) / 2,
          avail.y() + (avail.height() - height()) / 2);
   } else {
-    resize(1240, 700);
+    resize(1440, 900);
   }
 
   build_menu();
@@ -259,9 +261,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   main_layout->setContentsMargins(5, 4, 5, 4);
   main_layout->setSpacing(4);
 
-  module_tabs_ = new QTabBar(central);
+  auto* module_bar = new QWidget(central);
+  module_bar->setObjectName("moduleBar");
+  auto* module_bar_layout = new QVBoxLayout(module_bar);
+  module_bar_layout->setContentsMargins(0, 0, 0, 0);
+  module_bar_layout->setSpacing(2);
+
+  module_tabs_ = new QTabBar(module_bar);
   module_tabs_->addTab("Part");
   module_tabs_->addTab("Property");
+  module_tabs_->addTab("Material");
+  module_tabs_->addTab("Section");
   module_tabs_->addTab("Assembly");
   module_tabs_->addTab("Step");
   module_tabs_->addTab("Interaction");
@@ -270,7 +280,66 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   module_tabs_->addTab("Job");
   module_tabs_->addTab("Visualization");
   module_tabs_->addTab("Results");
-  main_layout->addWidget(module_tabs_);
+  module_tabs_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  module_tabs_->setMinimumHeight(30);
+  module_tabs_->setMaximumHeight(34);
+  module_tabs_->setExpanding(true);
+  module_tabs_->setUsesScrollButtons(false);
+  module_bar_layout->addWidget(module_tabs_);
+
+  auto* module_toolbar = new QWidget(module_bar);
+  module_toolbar->setObjectName("moduleToolbar");
+  module_toolbar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  module_toolbar->setFixedHeight(34);
+  auto* module_toolbar_layout = new QHBoxLayout(module_toolbar);
+  module_toolbar_layout->setContentsMargins(4, 0, 4, 2);
+  module_toolbar_layout->setSpacing(6);
+  auto* module_toolbar_title = new QLabel("Part", module_toolbar);
+  QFont module_toolbar_font = module_toolbar_title->font();
+  module_toolbar_font.setBold(true);
+  module_toolbar_font.setPointSize(module_toolbar_font.pointSize() + 1);
+  module_toolbar_title->setFont(module_toolbar_font);
+  auto* command_host = new QWidget(module_toolbar);
+  auto* command_layout = new QHBoxLayout(command_host);
+  command_layout->setContentsMargins(0, 0, 0, 0);
+  command_layout->setSpacing(6);
+  command_layout->addStretch(1);
+  module_toolbar_layout->addWidget(module_toolbar_title);
+  module_toolbar_layout->addWidget(command_host, 1);
+  module_bar_layout->addWidget(module_toolbar);
+  main_layout->addWidget(module_bar);
+
+  auto module_tab_index = [this](const QString& label) {
+    for (int i = 0; i < module_tabs_->count(); ++i) {
+      if (module_tabs_->tabText(i) == label) {
+        return i;
+      }
+    }
+    return -1;
+  };
+  std::vector<std::vector<std::pair<QString, std::function<void()>>>>
+      module_toolbar_actions(12);
+
+  const auto part_tab = module_tab_index("Part");
+  const auto property_tab = module_tab_index("Property");
+  const auto material_tab = module_tab_index("Material");
+  const auto section_tab = module_tab_index("Section");
+  const auto assembly_tab = module_tab_index("Assembly");
+  const auto step_tab = module_tab_index("Step");
+  const auto interaction_tab = module_tab_index("Interaction");
+  const auto load_tab = module_tab_index("Load");
+  const auto mesh_tab = module_tab_index("Mesh");
+  const auto job_tab = module_tab_index("Job");
+  const auto viz_tab = module_tab_index("Visualization");
+  const auto results_tab = module_tab_index("Results");
+
+  auto assign_module_actions =
+      [&module_toolbar_actions](int idx,
+                               std::vector<std::pair<QString, std::function<void()>>> actions) {
+        if (idx >= 0 && idx < static_cast<int>(module_toolbar_actions.size())) {
+          module_toolbar_actions[idx] = std::move(actions);
+        }
+      };
 
   auto make_module_page = [](const QString& title,
                             const QString& description,
@@ -323,18 +392,159 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     return container;
   };
 
+  auto make_module_node_page = [&](const QString& title,
+                                   const QString& description,
+                                   const QString& root_name,
+                                   QListWidget*& list_out,
+                                   const QString& empty_text,
+                                   const QString& selected_label,
+                                   const std::vector<std::pair<QString, std::function<void()>>> &buttons) {
+    auto* container = make_module_page(title, description, buttons);
+    auto* panel = new QWidget(container);
+    auto* list_layout = new QVBoxLayout(panel);
+    list_layout->setContentsMargins(0, 0, 0, 0);
+    list_layout->setSpacing(6);
+
+    auto* list = new QListWidget(panel);
+    list->setSelectionMode(QAbstractItemView::SingleSelection);
+    list->setMinimumHeight(120);
+    list->setAlternatingRowColors(true);
+    list->setToolTip("Double click item to jump to model tree.");
+    list_out = list;
+
+    auto* refresh_btn = new QPushButton("Refresh", panel);
+    auto* list_action_row = new QHBoxLayout();
+    list_action_row->addStretch(1);
+    list_action_row->addWidget(refresh_btn);
+    auto* list_action_bar = new QWidget(panel);
+    list_action_bar->setLayout(list_action_row);
+
+    list_layout->addWidget(new QLabel("Current entries:", panel));
+    list_layout->addWidget(list);
+    list_layout->addWidget(list_action_bar);
+    auto* page = qobject_cast<QVBoxLayout*>(container->layout());
+    if (page) {
+      page->addWidget(panel);
+    }
+
+    const QString safe_root = root_name;
+    const auto resolve_selected_item = [this, list, safe_root]() -> QTreeWidgetItem* {
+      if (!list || !model_tree_) {
+        return nullptr;
+      }
+      const auto* current = list->currentItem();
+      if (!current) {
+        return nullptr;
+      }
+      auto* root = find_root_item(safe_root);
+      if (!root) {
+        return nullptr;
+      }
+      const int row = list->row(const_cast<QListWidgetItem*>(current));
+      if (row < 0 || row >= root->childCount()) {
+        return nullptr;
+      }
+      return root->child(row);
+    };
+
+    auto* open_selected_btn =
+        new QPushButton(QString("Open Selected %1").arg(selected_label), panel);
+    auto* rename_btn = new QPushButton("Rename", panel);
+    auto* duplicate_btn = new QPushButton("Duplicate", panel);
+    auto* remove_btn = new QPushButton("Remove", panel);
+    connect(open_selected_btn, &QPushButton::clicked, this,
+            [this, resolve_selected_item, module_tab_index]() {
+      auto* target = resolve_selected_item();
+      if (!target) {
+        return;
+      }
+      model_tree_->setCurrentItem(target);
+      const int prop_tab = module_tab_index("Property");
+      if (prop_tab >= 0) {
+        module_tabs_->setCurrentIndex(prop_tab);
+      }
+      property_editor_->set_item(target);
+    });
+    connect(rename_btn, &QPushButton::clicked, this, [resolve_selected_item]() {
+      if (auto* target = resolve_selected_item()) {
+        target->setFlags(target->flags() | Qt::ItemIsEditable);
+        if (auto* itemView = target->treeWidget()) {
+          itemView->editItem(target, 0);
+        }
+      }
+    });
+    connect(duplicate_btn, &QPushButton::clicked, this, [this, resolve_selected_item]() {
+      duplicate_item(resolve_selected_item());
+    });
+    connect(remove_btn, &QPushButton::clicked, this, [this, resolve_selected_item]() {
+      remove_item(resolve_selected_item());
+    });
+    connect(list, &QListWidget::itemDoubleClicked, this,
+            [this, list, safe_root, module_tab_index](QListWidgetItem*) {
+              const auto* item = list->currentItem();
+              if (!item || !model_tree_) {
+                return;
+              }
+              const int row = list->row(const_cast<QListWidgetItem*>(item));
+              if (row < 0) {
+                return;
+              }
+              auto* root = find_root_item(safe_root);
+              if (!root || row < 0 || row >= root->childCount()) {
+                return;
+              }
+              auto* target = root->child(row);
+              if (target) {
+                model_tree_->setCurrentItem(target);
+                const int prop_tab = module_tab_index("Property");
+                if (prop_tab >= 0) {
+                  module_tabs_->setCurrentIndex(prop_tab);
+                }
+                property_editor_->set_item(target);
+              }
+            });
+    connect(refresh_btn, &QPushButton::clicked, this, [this]() {
+      refresh_module_pages();
+    });
+
+    list_action_row->insertWidget(0, open_selected_btn);
+    list_action_row->insertWidget(1, rename_btn);
+    list_action_row->insertWidget(2, duplicate_btn);
+    list_action_row->insertWidget(3, remove_btn);
+    return container;
+  };
+
   auto* vertical_split = new QSplitter(Qt::Vertical, central);
   vertical_split->setChildrenCollapsible(false);
   main_layout->addWidget(vertical_split, 1);
 
   auto* main_split = new QSplitter(Qt::Horizontal, vertical_split);
   main_split->setChildrenCollapsible(false);
+  main_split->setHandleWidth(3);
   vertical_split->addWidget(main_split);
 
-  auto* tree_panel = new QWidget(main_split);
+  auto* tree_panel = new QFrame(main_split);
+  tree_panel->setObjectName("treePanel");
+  tree_panel->setFrameShape(QFrame::StyledPanel);
+  tree_panel->setFrameShadow(QFrame::Sunken);
   auto* tree_layout = new QVBoxLayout(tree_panel);
   tree_layout->setContentsMargins(0, 0, 0, 0);
   tree_layout->setSpacing(3);
+  auto* model_tree_title = new QLabel("Model Tree", tree_panel);
+  QFont tree_title_font = model_tree_title->font();
+  tree_title_font.setBold(true);
+  model_tree_title->setFont(tree_title_font);
+  tree_layout->addWidget(model_tree_title);
+
+  workflow_status_label_ = new QLabel("Workflow: Part [0], Material [0], Section [0], "
+                                     "Steps [0], BC [0], Loads [0], Mesh [0]",
+                                     tree_panel);
+  workflow_status_label_->setObjectName("workflowStatus");
+  workflow_status_label_->setWordWrap(true);
+  workflow_status_label_->setTextFormat(Qt::PlainText);
+  workflow_status_label_->setStyleSheet("color: #404040;");
+  tree_layout->addWidget(workflow_status_label_);
+
   auto* tree_actions = new QHBoxLayout();
   auto* add_btn = new QPushButton("Add");
   auto* dup_btn = new QPushButton("Duplicate");
@@ -357,7 +567,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   tree_layout->addWidget(model_tree_, 1);
   build_model_tree();
 
-  auto* center_tabs = new QTabWidget(main_split);
+  auto* center_panel = new QFrame(main_split);
+  center_panel->setObjectName("centerPanel");
+  center_panel->setFrameShape(QFrame::StyledPanel);
+  center_panel->setFrameShadow(QFrame::Sunken);
+  auto* center_layout = new QVBoxLayout(center_panel);
+  center_layout->setContentsMargins(0, 0, 0, 0);
+  center_layout->setSpacing(3);
+  auto* center_title = new QLabel("Viewport", center_panel);
+  QFont center_title_font = center_title->font();
+  center_title_font.setBold(true);
+  center_title->setFont(center_title_font);
+  center_layout->addWidget(center_title);
+  auto* center_tabs = new QTabWidget(center_panel);
   viewer_ = new VtkViewer(center_tabs);
   center_tabs->addTab(viewer_, "Viewport");
   auto* plot_page = new QWidget(center_tabs);
@@ -412,9 +634,31 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   table_layout->addWidget(table_view, 1);
   center_tabs->addTab(plot_page, "Plot");
   center_tabs->addTab(table_page, "Table");
+  center_layout->addWidget(center_tabs);
 
-  property_stack_ = new QStackedWidget(main_split);
+  auto* property_panel = new QFrame(main_split);
+  property_panel->setObjectName("propertyPanel");
+  property_panel->setFrameShape(QFrame::StyledPanel);
+  property_panel->setFrameShadow(QFrame::Sunken);
+  auto* property_layout = new QVBoxLayout(property_panel);
+  property_layout->setContentsMargins(0, 0, 0, 0);
+  property_layout->setSpacing(3);
+  auto* property_title = new QLabel("Current Module", property_panel);
+  QFont property_title_font = property_title->font();
+  property_title_font.setBold(true);
+  property_title->setFont(property_title_font);
+  property_layout->addWidget(property_title);
+
+  property_stack_ = new QStackedWidget(property_panel);
   property_stack_->setMinimumWidth(340);
+  property_stack_->setMaximumWidth(520);
+  property_layout->addWidget(property_stack_, 1);
+
+  main_split->addWidget(tree_panel);
+  main_split->addWidget(center_panel);
+  main_split->addWidget(property_panel);
+
+  std::function<void(int)> apply_toolbar_actions;
 
   property_editor_ = new PropertyEditor(property_stack_);
   auto* mesh_page = new GmshPanel(property_stack_);
@@ -468,9 +712,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   job_split->setStretchFactor(1, 1);
   job_layout->addWidget(job_split, 1);
 
-  auto* part_page = make_module_page(
+  auto* part_page = make_module_node_page(
       "Part",
       "Define geometric primitives and manage part-level entities. Parts are a user-facing grouping for your geometry and mesh assignments.",
+      "Parts",
+      module_part_list_,
+      "No parts yet. Create one from this module or Gmsh panel.",
+      "part",
       {
           {"Open Parts Root",
            [this]() {
@@ -481,19 +729,87 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
              }
            }},
           {"New Part",
-           [this]() {
+            [this]() {
              if (auto* root = find_root_item("Parts")) {
                add_item_under_root(root);
              }
            }},
           {"Open Gmsh Panel",
-           [this]() { module_tabs_->setCurrentIndex(6); }
-          },
+           [this, module_tab_index]() {
+             const int mesh_tab = module_tab_index("Mesh");
+             if (mesh_tab >= 0) {
+               module_tabs_->setCurrentIndex(mesh_tab);
+             }
+           }},
       });
 
-  auto* assembly_page = make_module_page(
+  auto* material_page = make_module_node_page(
+      "Material",
+      "Create material definitions, tune constitutive laws, and keep properties ready for sections.",
+      "Materials",
+      module_material_list_,
+      "No materials yet.",
+      "material",
+      {
+          {"Open Materials Root", [this]() {
+             if (auto* root = find_root_item("Materials")) {
+               model_tree_->setCurrentItem(root);
+               root->setExpanded(true);
+             }
+           }},
+          {"New Material", [this]() {
+             if (auto* root = find_root_item("Materials")) {
+               const QVariantMap preset{{"type", "GenericConstantMaterial"},
+                                       {"prop_names", "density"},
+                                       {"prop_values", "1.0"}};
+               add_child_item(root, "material_1", "Materials", preset);
+             }
+           }},
+          {"Open Property Editor", [this, module_tab_index]() {
+             const int prop_tab = module_tab_index("Property");
+             if (prop_tab >= 0) {
+               module_tabs_->setCurrentIndex(prop_tab);
+             }
+           }},
+      });
+
+  auto* section_page = make_module_node_page(
+      "Section",
+      "Create section assignments to bind materials and options to part regions or sets.",
+      "Sections",
+      module_section_list_,
+      "No sections yet.",
+      "section",
+      {
+          {"Open Sections Root", [this]() {
+             if (auto* root = find_root_item("Sections")) {
+               model_tree_->setCurrentItem(root);
+               root->setExpanded(true);
+             }
+           }},
+          {"New Solid Section", [this]() {
+             if (auto* root = find_root_item("Sections")) {
+               const QVariantMap preset{{"type", "SolidSection"},
+                                       {"material", "material_1"},
+                                       {"block", "solid"}};
+               add_child_item(root, "section_1", "Sections", preset);
+             }
+           }},
+          {"Open Property Editor", [this, module_tab_index]() {
+             const int prop_tab = module_tab_index("Property");
+             if (prop_tab >= 0) {
+               module_tabs_->setCurrentIndex(prop_tab);
+             }
+           }},
+      });
+
+  auto* assembly_page = make_module_node_page(
       "Assembly",
       "Combine and instantiate parts into assembly-level units, then map mesh/topology for job-level binding.",
+      "Parts",
+      module_assembly_list_,
+      "No parts available for assembly yet.",
+      "part",
       {
           {"Open Mesh Root", [this]() {
              if (auto* root = find_root_item("Mesh")) {
@@ -502,14 +818,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
            }},
           {"Create Assembly Alias", [this]() {
              if (auto* root = find_root_item("Parts")) {
-               add_item_under_root(root);
+               const QVariantMap preset{{"type", "Assembly"}, {"description", ""}};
+               add_child_item(root, "assembly_1", "Parts", preset);
              }
            }},
       });
 
-  auto* step_page = make_module_page(
+  auto* step_page = make_module_node_page(
       "Step",
       "Create analysis steps, control time integration and execution options in the current model setup.",
+      "Steps",
+      module_step_list_,
+      "No steps yet. Add at least one step before run.",
+      "step",
       {
           {"Open Steps Root", [this]() {
              if (auto* root = find_root_item("Steps")) {
@@ -533,11 +854,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                add_child_item(root, "Transient", "Steps", preset);
              }
            }},
+          {"Add Step Preset: steady",
+           [this]() {
+             if (auto* root = find_root_item("Steps")) {
+               const QVariantMap preset{{"type", "Steady"},
+                                       {"dt", "1.0"},
+                                       {"end_time", "1.0"}};
+               add_child_item(root, "steady", "Steps", preset);
+             }
+           }},
       });
 
-  auto* interaction_page = make_module_page(
+  auto* interaction_page = make_module_node_page(
       "Interaction",
       "Setup contact, ties, and other coupling behaviors between sets/parts.",
+      "Interactions",
+      module_interaction_list_,
+      "No interactions yet.",
+      "interaction",
       {
           {"Open Interactions Root", [this]() {
              if (auto* root = find_root_item("Interactions")) {
@@ -550,11 +884,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                add_item_under_root(root);
              }
            }},
+          {"Add Tie Interaction", [this]() {
+             if (auto* root = find_root_item("Interactions")) {
+               add_child_item(root, "tie_1", "Interactions",
+                              {{"type", "Tie"},
+                               {"master", ""},
+                               {"slave", ""}});
+             }
+           }},
       });
 
-  auto* load_page = make_module_page(
+  auto* load_page = make_module_node_page(
       "Load",
       "Create loads, body forces, pressure and thermal sources and map them to mesh groups.",
+      "Loads",
+      module_load_list_,
+      "No loads yet.",
+      "load",
       {
           {"Open Loads Root", [this]() {
              if (auto* root = find_root_item("Loads")) {
@@ -576,7 +922,29 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                root->setExpanded(true);
              }
            }},
+          {"Add Thermal Source", [this]() {
+             if (auto* root = find_root_item("Loads")) {
+               add_child_item(root, "thermal_source", "Loads",
+                             {{"type", "BodyForce"},
+                              {"variable", "temperature"},
+                              {"value", "1.0"}});
+             }
+           }},
       });
+
+  auto* step_preview_label = new QLabel(
+      "Step sequence preview (Executioner uses first step; remaining shown for check):",
+      step_page);
+  step_preview_label->setWordWrap(true);
+  step_sequence_preview_ = new QPlainTextEdit(step_page);
+  step_sequence_preview_->setReadOnly(true);
+  step_sequence_preview_->setLineWrapMode(QPlainTextEdit::NoWrap);
+  step_sequence_preview_->setPlaceholderText("No steps yet.");
+  step_sequence_preview_->setMinimumHeight(96);
+  if (auto* page_layout = qobject_cast<QVBoxLayout*>(step_page->layout())) {
+    page_layout->addWidget(step_preview_label);
+    page_layout->addWidget(step_sequence_preview_);
+  }
 
   auto* visualization_page = make_module_page(
       "Visualization",
@@ -639,6 +1007,59 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   results_preview_->setLineWrapMode(QPlainTextEdit::NoWrap);
   results_layout->addWidget(results_preview_, 1);
 
+  auto open_result_in_viewer = [this, center_tabs](const QListWidgetItem* row) {
+    if (!row || !viewer_) {
+      return;
+    }
+    const QString path = row->data(Qt::UserRole).toString();
+    if (path.isEmpty()) {
+      statusBar()->showMessage("Selected result has no path.", 2000);
+      return;
+    }
+    const QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == "e" || ext == "exo" || ext == "exodus") {
+      viewer_->set_exodus_file(path);
+    } else {
+      viewer_->set_mesh_file(path);
+    }
+    sync_results_tree_selection(row);
+    center_tabs->setCurrentIndex(0);
+    statusBar()->showMessage("Opened result in viewer.", 1500);
+  };
+
+  auto open_result_as_text = [this](const QListWidgetItem* row) {
+    if (!row || !results_preview_) {
+      return;
+    }
+    sync_results_tree_selection(row);
+    const QString path = row->data(Qt::UserRole).toString();
+    if (path.isEmpty()) {
+      results_preview_->setPlainText("No file path for this result.");
+      return;
+    }
+    const QString ext = QFileInfo(path).suffix().toLower();
+    if (!(ext == "txt" || ext == "csv" || ext == "log" || ext == "yaml" ||
+          ext == "yml")) {
+      results_preview_->setPlainText(
+          QString("Text open is intended for text outputs only.\n"
+                  "Use Open in Viewer for: %1")
+              .arg(path));
+      return;
+    }
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+      results_preview_->setPlainText(QString("Failed to open file: %1").arg(path));
+      return;
+    }
+    const QString all = QString::fromUtf8(f.readAll());
+    if (all.size() > 8192) {
+      results_preview_->setPlainText(
+          all.left(8192) + "\n\n... (truncated to 8192 bytes)");
+    } else {
+      results_preview_->setPlainText(all);
+    }
+  };
+
   auto open_results_root = [this]() {
     if (auto* root = find_root_item("Results")) {
       model_tree_->setCurrentItem(root);
@@ -655,8 +1076,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
           this,
           [this]() { refresh_results_panel(); });
   connect(results_open_view, &QPushButton::clicked, this,
-          [this, center_tabs]() {
-            if (!results_list_ || !viewer_) {
+          [this, center_tabs, open_result_in_viewer]() {
+            if (!results_list_) {
               return;
             }
             const auto* item = results_list_->currentItem();
@@ -664,22 +1085,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
               statusBar()->showMessage("Select a result first.", 2000);
               return;
             }
-            const QString path = item->data(Qt::UserRole).toString();
-            if (path.isEmpty()) {
-              statusBar()->showMessage("Selected result has no path.", 2000);
-              return;
-            }
-            const QString ext = QFileInfo(path).suffix().toLower();
-            if (ext == "e" || ext == "exo" || ext == "exodus") {
-              viewer_->set_exodus_file(path);
-            } else {
-              viewer_->set_mesh_file(path);
-            }
-            center_tabs->setCurrentIndex(0);
-            statusBar()->showMessage("Opened result in viewer.", 1500);
+            open_result_in_viewer(item);
           });
   connect(results_open_text, &QPushButton::clicked, this,
-          [this]() {
+          [this, open_result_as_text]() {
             if (!results_list_ || !results_preview_) {
               return;
             }
@@ -688,18 +1097,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
               statusBar()->showMessage("Select a result first.", 2000);
               return;
             }
+            open_result_as_text(item);
+          });
+  connect(results_list_, &QListWidget::itemDoubleClicked, this,
+          [this, open_result_in_viewer, open_result_as_text](QListWidgetItem* item) {
+            if (!item) {
+              return;
+            }
             const QString path = item->data(Qt::UserRole).toString();
             if (path.isEmpty()) {
-              results_preview_->setPlainText("No file path for this result.");
               return;
             }
-            QFile f(path);
-            if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-              results_preview_->setPlainText(
-                  QString("Failed to open file: %1").arg(path));
-              return;
+            const QString ext = QFileInfo(path).suffix().toLower();
+            if (ext == "txt" || ext == "csv" || ext == "log" || ext == "yaml" ||
+                ext == "yml") {
+              open_result_as_text(item);
+            } else {
+              open_result_in_viewer(item);
             }
-            results_preview_->setPlainText(QString::fromUtf8(f.readAll()));
           });
   connect(results_list_, &QListWidget::currentItemChanged, this,
           [this](QListWidgetItem* current, QListWidgetItem*) {
@@ -709,6 +1124,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
               }
               return;
             }
+            sync_results_tree_selection(current);
             const QString path = current->data(Qt::UserRole).toString();
             if (path.isEmpty()) {
               results_preview_->setPlainText(
@@ -717,17 +1133,394 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
               return;
             }
             const QString job = current->data(Qt::UserRole + 1).toString();
-            QString details = QString("Result: %1\nPath: %2")
-                                  .arg(current->text())
-                                  .arg(path);
+            const QString ext = QFileInfo(path).suffix().toLower();
+            const QFileInfo fi(path);
+            QString details;
+            details += QString("Result: %1").arg(current->text());
+            details += QString("\nPath: %1").arg(path);
             if (!job.isEmpty()) {
               details += QString("\nJob: %1").arg(job);
+            }
+            if (fi.exists()) {
+              details +=
+                  QString("\nSize: %1 bytes\nModified: %2")
+                      .arg(fi.size())
+                      .arg(fi.lastModified().toString(Qt::ISODate));
+            }
+            if (ext == "e" || ext == "exo" || ext == "exodus") {
+              details += "\nType: Solver result (.e)";
+              details +=
+                  "\nAction: Open in Viewer";
+            } else if (ext == "msh") {
+              details += "\nType: Mesh (.msh)";
+              details +=
+                  "\nAction: Open in Viewer or import in Gmsh via menu/mesh action.";
+            } else if (ext == "txt" || ext == "csv" || ext == "log" ||
+                       ext == "yaml" || ext == "yml") {
+              details += "\nType: Text";
+            } else {
+              details += "\nType: Other";
+            }
+            if (fi.size() > 0 && (ext == "txt" || ext == "csv" || ext == "log" ||
+                                  ext == "yaml" || ext == "yml")) {
+              QFile f(path);
+              if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                QStringList lines;
+                for (int i = 0; i < 6; ++i) {
+                  const QByteArray chunk = f.readLine();
+                  if (chunk.isEmpty()) {
+                    break;
+                  }
+                  lines << QString::fromUtf8(chunk).trimmed();
+                }
+                if (!lines.isEmpty()) {
+                  details += "\n\nPreview:\n" + lines.join("\n");
+                }
+              }
             }
             results_preview_->setPlainText(details);
           });
 
+  assign_module_actions(part_tab,
+                       {
+                           {"Open Part Root", [this]() {
+                             if (auto* root = find_root_item("Parts")) {
+                               model_tree_->setCurrentItem(root);
+                               root->setExpanded(true);
+                             }
+                           }},
+                           {"New Part", [this]() {
+                             if (auto* root = find_root_item("Parts")) {
+                               add_item_under_root(root);
+                             }
+                           }},
+                           {"Open Mesh Module", [this, module_tab_index]() {
+                             const int target = module_tab_index("Mesh");
+                             if (target >= 0) {
+                               module_tabs_->setCurrentIndex(target);
+                             }
+                           }},
+                       });
+
+  assign_module_actions(property_tab,
+                       {
+                           {"Sync Model to Input", [this]() { sync_model_to_input(); }},
+                           {"Open Mesh Module", [this, module_tab_index]() {
+                             const int target = module_tab_index("Mesh");
+                             if (target >= 0) {
+                               module_tabs_->setCurrentIndex(target);
+                             }
+                           }},
+                           {"Open Job Module", [this, module_tab_index]() {
+                             const int target = module_tab_index("Job");
+                             if (target >= 0) {
+                               module_tabs_->setCurrentIndex(target);
+                             }
+                           }},
+                       });
+
+  assign_module_actions(material_tab,
+                       {
+                           {"Open Materials Root", [this]() {
+                             if (auto* root = find_root_item("Materials")) {
+                               model_tree_->setCurrentItem(root);
+                               root->setExpanded(true);
+                             }
+                           }},
+                           {"New Material", [this]() {
+                             if (auto* root = find_root_item("Materials")) {
+                               const QVariantMap preset{{"type", "GenericConstantMaterial"},
+                                                       {"prop_names", "density"},
+                                                       {"prop_values", "1.0"}};
+                               add_child_item(root, "material_1", "Materials", preset);
+                             }
+                           }},
+                       });
+
+  assign_module_actions(section_tab,
+                       {
+                           {"Open Sections Root", [this]() {
+                             if (auto* root = find_root_item("Sections")) {
+                               model_tree_->setCurrentItem(root);
+                               root->setExpanded(true);
+                             }
+                           }},
+                           {"New Solid Section", [this]() {
+                             if (auto* root = find_root_item("Sections")) {
+                               const QVariantMap preset{{"type", "SolidSection"},
+                                                       {"material", "material_1"},
+                                                       {"block", "solid"}};
+                               add_child_item(root, "section_1", "Sections", preset);
+                             }
+                           }},
+                       });
+
+  assign_module_actions(assembly_tab,
+                       {
+                           {"Open Assembly", [this, module_tab_index]() {
+                             const int mesh_tab = module_tab_index("Mesh");
+                             if (mesh_tab >= 0) {
+                               module_tabs_->setCurrentIndex(mesh_tab);
+                             }
+                           }},
+                           {"Create Assembly Alias", [this]() {
+                             if (auto* root = find_root_item("Parts")) {
+                               add_child_item(root, "assembly_1", "Parts",
+                                             {{"type", "Assembly"},
+                                              {"description", ""}});
+                             }
+                           }},
+                       });
+
+  assign_module_actions(step_tab,
+                       {
+                           {"Open Steps Root", [this]() {
+                             if (auto* root = find_root_item("Steps")) {
+                               model_tree_->setCurrentItem(root);
+                               root->setExpanded(true);
+                             }
+                           }},
+                           {"Add Steady Step", [this]() {
+                             if (auto* root = find_root_item("Steps")) {
+                               const QVariantMap preset{{"type", "Steady"},
+                                                       {"dt", "1.0"},
+                                                       {"end_time", "1.0"}};
+                               add_child_item(root, "steady", "Steps", preset);
+                             }
+                           }},
+                           {"Add Static Step", [this]() {
+                             if (auto* root = find_root_item("Steps")) {
+                               const QVariantMap preset{{"type", "Static"},
+                                                       {"dt", "0.0"},
+                                                       {"end_time", "1.0"}};
+                               add_child_item(root, "static", "Steps", preset);
+                             }
+                           }},
+                       });
+
+  assign_module_actions(interaction_tab,
+                       {
+                           {"Open Interactions Root", [this]() {
+                             if (auto* root = find_root_item("Interactions")) {
+                               model_tree_->setCurrentItem(root);
+                               root->setExpanded(true);
+                             }
+                           }},
+                           {"Add Interaction", [this]() {
+                             if (auto* root = find_root_item("Interactions")) {
+                               add_item_under_root(root);
+                             }
+                           }},
+                       });
+
+  assign_module_actions(load_tab,
+                       {
+                           {"Open Loads Root", [this]() {
+                             if (auto* root = find_root_item("Loads")) {
+                               model_tree_->setCurrentItem(root);
+                               root->setExpanded(true);
+                             }
+                           }},
+                           {"Add Body Force", [this]() {
+                             if (auto* root = find_root_item("Loads")) {
+                               add_child_item(root, "load_body_force", "Loads",
+                                             {{"type", "BodyForce"},
+                                              {"variable", "u"},
+                                              {"value", "0"}});
+                             }
+                           }},
+                           {"Open BC Root", [this]() {
+                             if (auto* root = find_root_item("BC")) {
+                               model_tree_->setCurrentItem(root);
+                               root->setExpanded(true);
+                             }
+                           }},
+                       });
+
+  assign_module_actions(mesh_tab,
+                       {
+                           {"Generate Mesh", [this]() {
+                             if (gmsh_panel_) {
+                               gmsh_panel_->generate_mesh();
+                             }
+                           }},
+                           {"Generate 2D Mesh", [this]() {
+                             if (gmsh_panel_) {
+                               gmsh_panel_->set_mesh_generation_dim(2);
+                               gmsh_panel_->generate_mesh();
+                             }
+                           }},
+                           {"Generate 3D Mesh", [this]() {
+                             if (gmsh_panel_) {
+                               gmsh_panel_->set_mesh_generation_dim(3);
+                               gmsh_panel_->generate_mesh();
+                             }
+                           }},
+                           {"Open Mesh Root", [this]() {
+                             if (auto* root = find_root_item("Mesh")) {
+                               model_tree_->setCurrentItem(root);
+                               root->setExpanded(true);
+                             }
+                           }},
+                           {"Generate & Submit", [this]() {
+                             if (gmsh_panel_) {
+                               gmsh_panel_->set_mesh_generation_dim(3);
+                               gmsh_panel_->generate_mesh();
+                             }
+                             start_submit_workflow();
+                           }},
+                       });
+
+  assign_module_actions(job_tab,
+                       {
+                           {"Prepare Workflow Defaults",
+                            [this]() { ensure_basic_workflow_nodes(); }},
+                           {"Sync to Input", [this]() { sync_model_to_input(); }},
+                           {"Submit (Mesh + Sync + Run)", [this]() {
+                             start_submit_workflow();
+                           }},
+                           {"Run", [this]() {
+                             if (moose_panel_) {
+                               moose_panel_->run_job();
+                             }
+                           }},
+                           {"Check Input", [this]() {
+                             if (moose_panel_) {
+                               moose_panel_->check_input();
+                             }
+                           }},
+                           {"Stop", [this]() {
+                             if (moose_panel_) {
+                               moose_panel_->stop_job();
+                             }
+                           }},
+                       });
+
+  assign_module_actions(viz_tab,
+                       {
+                           {"Open Viewport", [center_tabs]() { center_tabs->setCurrentIndex(0); }},
+                           {"Open Plot", [center_tabs]() { center_tabs->setCurrentIndex(1); }},
+                           {"Open Table", [center_tabs]() { center_tabs->setCurrentIndex(2); }},
+                       });
+
+  auto open_selected_result_in_viewer = [this, center_tabs]() {
+    if (!results_list_) {
+      return;
+    }
+    const auto* row = results_list_->currentItem();
+    if (!row) {
+      statusBar()->showMessage("Select a result first.", 2000);
+      return;
+    }
+    const QString path = row->data(Qt::UserRole).toString();
+    if (path.isEmpty() || !viewer_) {
+      return;
+    }
+    const QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == "e" || ext == "exo" || ext == "exodus") {
+      viewer_->set_exodus_file(path);
+    } else {
+      viewer_->set_mesh_file(path);
+    }
+    center_tabs->setCurrentIndex(0);
+    sync_results_tree_selection(row);
+  };
+  auto open_selected_result_as_text = [this, open_result_as_text]() {
+    if (!results_list_ || !results_preview_) {
+      return;
+    }
+    const auto* row = results_list_->currentItem();
+    if (!row) {
+      statusBar()->showMessage("Select a result first.", 2000);
+      return;
+    }
+    sync_results_tree_selection(row);
+    const QString path = row->data(Qt::UserRole).toString();
+    if (path.isEmpty()) {
+      return;
+    }
+    open_result_as_text(row);
+  };
+
+  assign_module_actions(results_tab,
+                       {
+                           {"Refresh Results", [this]() {
+                             refresh_results_panel();
+                           }},
+                           {"Open in Viewer", [open_selected_result_in_viewer]() {
+                             open_selected_result_in_viewer();
+                           }},
+                           {"Open as Text", [open_selected_result_as_text]() {
+                             open_selected_result_as_text();
+                           }},
+                           {"Open Job Log", [this]() {
+                             if (!moose_panel_) {
+                               return;
+                             }
+                             QDialog dialog(this);
+                             dialog.setWindowTitle("Job Log");
+                             dialog.resize(800, 500);
+                             auto* layout = new QVBoxLayout(&dialog);
+                             auto* log_view = new QPlainTextEdit(&dialog);
+                             log_view->setReadOnly(true);
+                             log_view->setPlainText(moose_panel_->log_text());
+                             layout->addWidget(log_view);
+                             dialog.exec();
+                           }},
+                       });
+
+  apply_toolbar_actions = [this,
+                          command_layout,
+                          module_toolbar_title,
+                          property_title,
+                          command_host,
+                          toolbar_actions = std::move(module_toolbar_actions)](int index) {
+    const QString title =
+        (index >= 0) ? module_tabs_->tabText(index) : QString("Modules");
+    module_toolbar_title->setText(title + " Module");
+    if (property_title) {
+      property_title->setText(title + " Module");
+    }
+
+    while (QLayoutItem* item = command_layout->takeAt(0)) {
+      if (item->widget()) {
+        item->widget()->deleteLater();
+      }
+      delete item;
+    }
+
+    const int clamped_index =
+        (index >= 0 && index < static_cast<int>(toolbar_actions.size()) ? index : -1);
+    if (clamped_index < 0) {
+      command_layout->addStretch(1);
+      return;
+    }
+
+    const auto& actions = toolbar_actions[clamped_index];
+    if (actions.empty()) {
+      auto* hint = new QLabel("No quick actions", command_host);
+      QFont hint_font = hint->font();
+      hint_font.setItalic(true);
+      hint->setFont(hint_font);
+      command_layout->addWidget(hint);
+      command_layout->addStretch(1);
+      return;
+    }
+
+    for (const auto& action : actions) {
+      auto* action_btn = new QPushButton(action.first, command_host);
+      action_btn->setMinimumHeight(24);
+      connect(action_btn, &QPushButton::clicked, action_btn,
+              [action]() { action.second(); });
+      command_layout->addWidget(action_btn);
+    }
+    command_layout->addStretch(1);
+  };
+
   property_stack_->addWidget(property_editor_);
   property_stack_->addWidget(part_page);
+  property_stack_->addWidget(material_page);
+  property_stack_->addWidget(section_page);
   property_stack_->addWidget(assembly_page);
   property_stack_->addWidget(step_page);
   property_stack_->addWidget(interaction_page);
@@ -736,6 +1529,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   property_stack_->addWidget(job_container);
   property_stack_->addWidget(visualization_page);
   property_stack_->addWidget(results_page);
+  refresh_module_pages();
 
   console_ = new QPlainTextEdit(vertical_split);
   console_->setReadOnly(true);
@@ -743,30 +1537,42 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   console_->setPlaceholderText("Job/Message Console");
   vertical_split->addWidget(console_);
 
-  vertical_split->setStretchFactor(0, 1);
+  vertical_split->setStretchFactor(0, 4);
   vertical_split->setStretchFactor(1, 1);
   main_split->setStretchFactor(0, 0);
   main_split->setStretchFactor(1, 1);
   main_split->setStretchFactor(2, 0);
+  const int left_w = qBound(220, int(width() * 0.18), 320);
+  const int right_w = qBound(340, int(width() * 0.27), 520);
+  const int center_w = std::max(560, width() - left_w - right_w);
+  main_split->setSizes({left_w, center_w, right_w});
 
   connect(module_tabs_, &QTabBar::currentChanged, this,
-          [this](int index) {
-            static constexpr int module_to_property[] = {1, 0, 2, 3, 4, 5, 6, 7, 8, 9};
-            constexpr int module_count = 10;
+          [this, apply_toolbar_actions, results_tab](
+              int index) {
+            static constexpr int module_to_property[] = {1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+            constexpr int module_count = 12;
             const int target =
                 (index >= 0 && index < module_count) ? module_to_property[index] : 0;
+            refresh_module_pages();
             if (target >= 0 && target < property_stack_->count()) {
               property_stack_->setCurrentIndex(target);
             }
-            if (index == 9) {
+            apply_toolbar_actions(index);
+            if (index == results_tab) {
               refresh_results_panel();
             }
             if (target == 0 && property_editor_) {
               property_editor_->set_item(model_tree_->currentItem());
             }
           });
-  module_tabs_->setCurrentIndex(8);
-  property_stack_->setCurrentIndex(8);
+  if (part_tab >= 0) {
+    module_tabs_->setCurrentIndex(part_tab);
+  } else {
+    module_tabs_->setCurrentIndex(0);
+  }
+  property_stack_->setCurrentIndex(1);
+  apply_toolbar_actions(module_tabs_->currentIndex());
 
   const QString initial_plot = viewer_->plot_snapshot_text();
   const QString initial_plot_stats = viewer_->plot_stats_snapshot();
@@ -970,6 +1776,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
               return;
             }
             set_project_dirty(true);
+            refresh_module_pages();
             if (property_editor_) {
               property_editor_->refresh_form_options();
             }
@@ -1061,6 +1868,7 @@ void MainWindow::build_menu() {
     clear_model_tree_children();
     refresh_job_table();
     property_editor_->set_item(nullptr);
+    refresh_module_pages();
     console_->appendPlainText("New project created.");
     statusBar()->showMessage("New project created.", 2000);
     set_project_dirty(false);
@@ -1075,6 +1883,7 @@ void MainWindow::build_menu() {
     }
     load_project(path);
     statusBar()->showMessage("Project loaded.", 2000);
+    refresh_module_pages();
   });
   connect(action_save_, &QAction::triggered, this, [this]() {
     if (project_path_.isEmpty()) {
@@ -1251,6 +2060,32 @@ void MainWindow::apply_theme() {
 
   const QString style = R"(
 QMainWindow { background: #e6e6e6; }
+QWidget#moduleBar {
+  background: #d9d9d9;
+  border-bottom: 1px solid #b5b5b5;
+  padding: 1px;
+}
+QWidget#moduleToolbar {
+  background: #efefef;
+  border-top: 1px solid #ffffff;
+  border-bottom: 1px solid #b5b5b5;
+}
+QWidget#treePanel,
+QWidget#centerPanel,
+QWidget#propertyPanel {
+  border: 1px solid #b5b5b5;
+  background: #ececec;
+}
+QLabel#workflowStatus {
+  border: 1px solid #c6c6c6;
+  border-radius: 2px;
+  background: #f6f6f6;
+  padding: 4px 6px;
+}
+QWidget#treePanel,
+QWidget#propertyPanel {
+  margin: 0;
+}
 QMenuBar {
   background: #d4d4d4;
   border-bottom: 1px solid #b5b5b5;
@@ -1260,10 +2095,23 @@ QMenuBar::item:selected { background: #c9c9c9; }
 QTabBar::tab {
   background: #d9d9d9;
   border: 1px solid #b5b5b5;
-  padding: 6px 14px;
+  border-bottom: none;
+  padding: 7px 14px;
+  min-height: 26px;
   margin-right: 2px;
 }
-QTabBar::tab:selected { background: #f2f2f2; }
+QTabBar::tab:selected {
+  background: #f2f2f2;
+  border-bottom: 1px solid #f2f2f2;
+}
+QTabBar::tab:hover { background: #efefef; }
+QTabBar::tear {
+  border: 0;
+}
+QTabBar {
+  qproperty-shape: RoundedNorth;
+  border-bottom: 1px solid #b5b5b5;
+}
 QTreeWidget, QPlainTextEdit, QLineEdit, QTableWidget, QComboBox, QSpinBox,
 QDoubleSpinBox {
   background: #fbfbfb;
@@ -1354,10 +2202,20 @@ QToolButton:checked { background: #c9c9c9; }
 }
 
 void MainWindow::build_model_tree() {
-  const QStringList root_nodes = {"Parts", "Materials",  "Sections",  "Steps",
-                                  "Functions", "Variables", "BC", "Loads",
-                                  "Outputs", "Interactions", "Mesh", "Jobs",
-                                  "Results"};
+  const QStringList root_nodes = {
+      "Parts",
+      "Materials",
+      "Sections",
+      "Steps",
+      "BC",
+      "Loads",
+      "Interactions",
+      "Functions",
+      "Variables",
+      "Outputs",
+      "Mesh",
+      "Jobs",
+      "Results"};
   for (const auto& name : root_nodes) {
     auto* item = new QTreeWidgetItem(model_tree_);
     item->setText(0, name);
@@ -1442,6 +2300,296 @@ void MainWindow::clear_model_tree_children() {
   }
 }
 
+void MainWindow::refresh_module_node_list(QListWidget* list,
+                                         const QString& root_name,
+                                         const QString& empty_text) const {
+  if (!list) {
+    return;
+  }
+  list->clear();
+  auto* root = find_root_item(root_name);
+  if (!root || root->childCount() == 0) {
+    list->addItem(empty_text);
+    return;
+  }
+  for (int i = 0; i < root->childCount(); ++i) {
+    auto* child = root->child(i);
+    if (!child) {
+      continue;
+    }
+    QString label = child->text(0);
+    const QVariantMap params =
+        child->data(0, PropertyEditor::kParamsRole).toMap();
+    const QString type = params.value("type").toString();
+    if (!type.isEmpty()) {
+      label += QString(" (%1)").arg(type);
+    }
+    auto* item = new QListWidgetItem(label, list);
+    item->setData(Qt::UserRole, i);
+    const QString status = params.value("status").toString();
+    if (!status.isEmpty()) {
+      item->setToolTip(QString("status: %1").arg(status));
+    } else if (!params.isEmpty()) {
+      item->setToolTip(params.keys().join(", "));
+    }
+  }
+}
+
+QString MainWindow::build_step_sequence_preview() const {
+  auto* root = find_root_item("Steps");
+  if (!root || root->childCount() == 0) {
+    return "No step blocks yet.";
+  }
+  QStringList lines;
+  lines << "Executioner uses the first step only.";
+  lines << "Configured sequence:";
+  for (int i = 0; i < root->childCount(); ++i) {
+    auto* child = root->child(i);
+    if (!child) {
+      continue;
+    }
+    const QVariantMap params =
+        child->data(0, PropertyEditor::kParamsRole).toMap();
+    const QString type = params.value("type", "Transient").toString();
+    const QString dt = params.value("dt", "default").toString();
+    const QString end_time = params.value("end_time", "default").toString();
+    lines << QString("%1) %2 | type=%3 dt=%4 end_time=%5")
+                 .arg(i + 1)
+                 .arg(child->text(0))
+                 .arg(type)
+                 .arg(dt)
+                 .arg(end_time);
+  }
+  return lines.join('\n');
+}
+
+void MainWindow::refresh_module_pages() {
+  refresh_module_node_list(module_part_list_, "Parts", "No parts yet.");
+  refresh_module_node_list(module_material_list_, "Materials", "No materials yet.");
+  refresh_module_node_list(module_section_list_, "Sections", "No sections yet.");
+  refresh_module_node_list(module_assembly_list_, "Parts",
+                          "No part entries available for assembly.");
+  refresh_module_node_list(module_step_list_, "Steps", "No steps yet.");
+  refresh_module_node_list(module_interaction_list_, "Interactions",
+                          "No interactions yet.");
+  refresh_module_node_list(module_load_list_, "Loads", "No loads yet.");
+  if (step_sequence_preview_) {
+    step_sequence_preview_->setPlainText(build_step_sequence_preview());
+  }
+  refresh_workflow_status();
+}
+
+int MainWindow::child_count(const QString& root_name) const {
+  const auto* root = find_root_item(root_name);
+  return root ? root->childCount() : 0;
+}
+
+void MainWindow::refresh_workflow_status() {
+  if (!workflow_status_label_) {
+    return;
+  }
+  const int parts = child_count("Parts");
+  const int materials = child_count("Materials");
+  const int sections = child_count("Sections");
+  const int steps = child_count("Steps");
+  const int bcs = child_count("BC");
+  const int loads = child_count("Loads");
+  const int meshes = child_count("Mesh");
+  const int jobs = child_count("Jobs");
+
+  auto format_state = [](int count, const QString& name) -> QString {
+    return QString("%1: %2 (%3)")
+        .arg(name)
+        .arg(count)
+        .arg(count > 0 ? "ready" : "missing");
+  };
+
+  QStringList segments;
+  segments << format_state(parts, "Parts");
+  segments << format_state(materials, "Materials");
+  segments << format_state(sections, "Sections");
+  segments << format_state(steps, "Steps");
+  segments << format_state(bcs, "BC");
+  segments << format_state(loads, "Loads");
+  segments << format_state(meshes, "Mesh");
+  segments << format_state(jobs, "Jobs");
+
+  workflow_status_label_->setText(QString("Workflow status: ") + segments.join(" | "));
+}
+
+void MainWindow::ensure_basic_workflow_nodes() {
+  auto make_name = [](const QString& base, QTreeWidgetItem* root) -> QString {
+    if (!root) {
+      return base;
+    }
+    QString cand = base;
+    QSet<QString> existing;
+    for (int i = 0; i < root->childCount(); ++i) {
+      if (auto* c = root->child(i)) {
+        existing.insert(c->text(0));
+      }
+    }
+    if (!existing.contains(cand)) {
+      return cand;
+    }
+    int seq = 1;
+    while (true) {
+      cand = QString("%1_%2").arg(base).arg(seq++);
+      if (!existing.contains(cand)) {
+        return cand;
+      }
+    }
+  };
+
+  const bool existed_parts = child_count("Parts") > 0;
+  const bool existed_materials = child_count("Materials") > 0;
+  const bool existed_sections = child_count("Sections") > 0;
+  const bool existed_steps = child_count("Steps") > 0;
+  const bool existed_bc = child_count("BC") > 0;
+  const bool existed_loads = child_count("Loads") > 0;
+
+  if (!existed_parts) {
+    auto* root = find_root_item("Parts");
+    if (root) {
+      add_child_item(root, make_name("part_1", root), "Parts",
+                     {{"type", "Part"}, {"description", "Auto-created for quick submit."}});
+    }
+  }
+
+  if (!existed_materials) {
+    auto* root = find_root_item("Materials");
+    if (root) {
+      add_child_item(root, make_name("material_1", root), "Materials",
+                     {{"type", "GenericConstantMaterial"},
+                      {"prop_names", "prop"},
+                      {"prop_values", "1.0"}});
+    }
+  }
+
+  if (!existed_sections) {
+    auto* root = find_root_item("Sections");
+    if (root) {
+      auto* materials = find_root_item("Materials");
+      QString material_name = "material_1";
+      if (materials && materials->childCount() > 0 && materials->child(0)) {
+        material_name = materials->child(0)->text(0);
+      }
+      add_child_item(root, make_name("section_1", root), "Sections",
+                     {{"type", "SolidSection"},
+                      {"material", material_name},
+                      {"block", "solid"}});
+    }
+  }
+
+  if (!existed_steps) {
+    auto* root = find_root_item("Steps");
+    if (root) {
+      add_child_item(root, make_name("steady_step", root), "Steps",
+                     {{"type", "Steady"}, {"dt", "1.0"}, {"end_time", "1.0"}});
+    }
+  }
+
+  if (!existed_bc && !existed_loads) {
+    auto* root = find_root_item("BC");
+    if (root) {
+      add_child_item(root, make_name("bc_1", root), "BC",
+                     {{"type", "DirichletBC"},
+                      {"variable", "u"},
+                      {"boundary", "left"},
+                      {"value", "0"}});
+    }
+    auto* loads_root = find_root_item("Loads");
+    if (loads_root) {
+      add_child_item(loads_root, make_name("load_1", loads_root), "Loads",
+                     {{"type", "BodyForce"},
+                      {"variable", "u"},
+                      {"value", "0"}});
+    }
+  }
+
+  refresh_module_pages();
+  if (!existed_parts || !existed_materials || !existed_sections || !existed_steps ||
+      (!existed_bc && !existed_loads)) {
+    set_project_dirty(true);
+    if (statusBar()) {
+      statusBar()->showMessage("Auto-created missing workflow nodes for quick submit.",
+                               2000);
+    }
+  }
+}
+
+void MainWindow::start_submit_workflow() {
+  if (!gmsh_panel_ || !moose_panel_) {
+    if (statusBar()) {
+      statusBar()->showMessage("MOOSE/Gmsh panel unavailable.", 2500);
+    }
+    return;
+  }
+
+  ensure_basic_workflow_nodes();
+
+  auto latest_mesh_from_project = [this]() -> QString {
+    const auto* root = find_root_item("Mesh");
+    if (!root || root->childCount() == 0) {
+      return {};
+    }
+    for (int i = root->childCount() - 1; i >= 0; --i) {
+      auto* item = root->child(i);
+      if (!item) {
+        continue;
+      }
+      const QVariantMap params =
+          item->data(0, PropertyEditor::kParamsRole).toMap();
+      const QString path = params.value("path").toString();
+      if (!path.isEmpty()) {
+        return path;
+      }
+    }
+    return {};
+  };
+
+  auto sync_mesh_for_submit = [this, latest_mesh_from_project]() -> QString {
+    QString path = moose_panel_->moose_settings().value("mesh_path").toString();
+    if (!path.isEmpty()) {
+      return path;
+    }
+    path = latest_mesh_from_project();
+    if (!path.isEmpty()) {
+      return path;
+    }
+    gmsh_panel_->set_mesh_generation_dim(3);
+    gmsh_panel_->generate_mesh();
+    const QString after_mesh =
+        moose_panel_->moose_settings().value("mesh_path").toString();
+    if (!after_mesh.isEmpty()) {
+      return after_mesh;
+    }
+    return latest_mesh_from_project();
+  };
+
+  const QString mesh_path = sync_mesh_for_submit();
+  if (mesh_path.isEmpty()) {
+    if (statusBar()) {
+      statusBar()->showMessage("No mesh found, cannot submit without mesh.", 3000);
+    }
+    return;
+  }
+
+  const QString template_key = moose_panel_->moose_settings().value("template_key").toString();
+  if (template_key == "generated") {
+    moose_panel_->set_template_by_key("filemesh");
+  } else if (template_key == "tm_generated") {
+    moose_panel_->set_template_by_key("tm_filemesh");
+  }
+
+  sync_model_to_input();
+  moose_panel_->set_mesh_path(mesh_path);
+  moose_panel_->run_job();
+  if (statusBar()) {
+    statusBar()->showMessage("Submit workflow started.", 3000);
+  }
+}
+
 QTreeWidgetItem* MainWindow::find_root_item(const QString& name) const {
   for (int i = 0; i < model_tree_->topLevelItemCount(); ++i) {
     auto* root = model_tree_->topLevelItem(i);
@@ -1486,6 +2634,10 @@ QTreeWidgetItem* MainWindow::add_child_item(QTreeWidgetItem* root,
   item->setData(0, PropertyEditor::kParamsRole, normalized);
   root->setExpanded(true);
   model_tree_->setCurrentItem(item);
+  refresh_module_pages();
+  if (property_editor_) {
+    property_editor_->refresh_form_options();
+  }
   return item;
 }
 
@@ -1544,6 +2696,10 @@ void MainWindow::upsert_result_item(const QString& path,
 void MainWindow::refresh_results_panel() {
   if (!results_list_ || !results_preview_) {
     return;
+  }
+  QString saved_path;
+  if (const auto* current = results_list_->currentItem()) {
+    saved_path = current->data(Qt::UserRole).toString();
   }
   results_list_->clear();
   results_preview_->clear();
@@ -1604,6 +2760,48 @@ void MainWindow::refresh_results_panel() {
   }
   if (results_list_->count() == 0) {
     results_list_->addItem("No results yet.");
+  }
+  if (!saved_path.isEmpty()) {
+    for (int i = 0; i < results_list_->count(); ++i) {
+      auto* row = results_list_->item(i);
+      if (!row) {
+        continue;
+      }
+      if (row->data(Qt::UserRole).toString() == saved_path) {
+        results_list_->setCurrentItem(row);
+        break;
+      }
+    }
+  } else if (results_list_->count() > 0 &&
+             results_list_->item(0)->text() != "No results yet.") {
+    results_list_->setCurrentRow(0);
+  }
+}
+
+void MainWindow::sync_results_tree_selection(const QListWidgetItem* row) {
+  if (!row || !model_tree_) {
+    return;
+  }
+  const QString path = row->data(Qt::UserRole).toString();
+  if (path.isEmpty()) {
+    return;
+  }
+  auto* root = find_root_item("Results");
+  if (!root) {
+    return;
+  }
+  for (int i = 0; i < root->childCount(); ++i) {
+    auto* node = root->child(i);
+    if (!node) {
+      continue;
+    }
+    const auto params = node->data(0, PropertyEditor::kParamsRole).toMap();
+    if (params.value("path").toString() == path) {
+      model_tree_->setCurrentItem(node);
+      node->setExpanded(true);
+      root->setExpanded(true);
+      break;
+    }
   }
 }
 
@@ -2081,6 +3279,7 @@ void MainWindow::add_item_under_root(QTreeWidgetItem* root) {
   root->setExpanded(true);
   model_tree_->setCurrentItem(item);
   set_project_dirty(true);
+  refresh_module_pages();
   if (property_editor_) {
     property_editor_->refresh_form_options();
   }
@@ -2094,6 +3293,7 @@ void MainWindow::remove_item(QTreeWidgetItem* item) {
   parent->removeChild(item);
   delete item;
   set_project_dirty(true);
+  refresh_module_pages();
   if (property_editor_) {
     property_editor_->refresh_form_options();
   }
@@ -2117,6 +3317,7 @@ void MainWindow::duplicate_item(QTreeWidgetItem* item) {
   parent->setExpanded(true);
   model_tree_->setCurrentItem(child);
   set_project_dirty(true);
+  refresh_module_pages();
   if (property_editor_) {
     property_editor_->refresh_form_options();
   }
@@ -2326,6 +3527,7 @@ void MainWindow::load_project(const QString& path) {
     suppress_dirty_ = false;
     refresh_job_table();
     refresh_results_panel();
+    refresh_module_pages();
     add_recent_project(path);
     set_project_dirty(false);
     update_project_status();

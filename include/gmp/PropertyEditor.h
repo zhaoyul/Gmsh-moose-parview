@@ -16,7 +16,6 @@ class QCheckBox;
 class QWidget;
 class QHBoxLayout;
 class QComboBox;
-class QTabWidget;
 class QPlainTextEdit;
 
 namespace gmp {
@@ -42,6 +41,7 @@ class PropertyEditor : public QWidget {
   void on_apply_groups();
   void on_validate_model();
   void on_apply_template();
+  void refresh_preview();
 
  private:
   void load_from_item();
@@ -101,6 +101,8 @@ class PropertyEditor : public QWidget {
   QPushButton* validation_goto_btn_ = nullptr;
   QCheckBox* validation_filter_current_ = nullptr;
   QCheckBox* validation_only_with_issues_ = nullptr;
+  QLabel* preview_summary_label_ = nullptr;
+  QPlainTextEdit* preview_text_ = nullptr;
 
   QTabWidget* template_tabs_ = nullptr;
   QPlainTextEdit* template_preview_ = nullptr;

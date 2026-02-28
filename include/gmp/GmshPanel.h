@@ -26,6 +26,7 @@ class GmshPanel : public QWidget {
 
  public slots:
   void generate_mesh();
+  void set_mesh_generation_dim(int dim);
   QVariantMap gmsh_settings() const;
   void apply_gmsh_settings(const QVariantMap& settings);
   void select_physical_group(int dim, int tag);

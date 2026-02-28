@@ -305,8 +305,76 @@
      - `GmshPanel::on_physical_group_selected` 在执行 `gmsh::model::*` 查询前增加 `ensure_gmsh()` 与 readiness 检查，避免“Gmsh has not been initialized”报错。
    - 编译与回归：`cmake --build build -j4` 通过。
 ** Progress Update (2026-02-24)
+   - Module pages now auto-refresh when nodes are added via quick actions (`add_child_item`), and Property form options are synchronized immediately.
+   - This keeps Part/Assembly/Step/Interaction/Load lists consistent when creating nodes from module pages.
+   - Build check: `cmake --build build -j4` passes.
+** Progress Update (2026-02-25)
+   - 模块列表交互收口（去重）：
+     - 去除模块列表重复的 `Open selected` 按钮与重复槽，统一保留列表内 `Open Selected`/`Rename`/`Duplicate`/`Remove` 动作入口。
+     - `Open Selected` 动作与现有模型树/Property 页跳转保持一致（选中后切到 Property 并高亮目标节点）。
+   - 结果面板与模型树联动：
+     - `Results` 列表每次选中/打开/文本查看时，自动在模型树定位到同路径的结果节点。
+     - 结果列表刷新时保留按路径匹配的上次选中；无有效历史时默认聚焦首条结果。
+     - 列表重新刷新的同时刷新预览联动，提升“结果-模型树-可视化”闭环体验。
+     - 构建验证：`cmake --build build -j4` 通过。
+   - 结果列表增强：
+     - 新增结果条目“双击”行为：文本类文件自动在预览窗口打开，网格/求解结果自动在视口打开。
+     - 新增“Open in Viewer / Open as Text”分别复用统一的结果打开逻辑，避免重复代码路径。
+     - 编译与回归：`cmake --build build -j4` 通过。
+** Progress Update (2026-02-24)
    - 结果管理页面功能增强：
      - 在 `Results` 页新增输出类型筛选（All / Solver / Mesh / Text）。
      - 筛选会按 `results_list_` 文件扩展名实时过滤（.e/.exo、.msh、.txt/.csv/.log/.yaml/.yml）。
      - 现有 `Open in Viewer`/`Open as Text` 行为继续沿用，兼容扩展过滤后的列表。
    - 编译与回归：`cmake --build build -j4` 通过。
+** Progress Update (2026-02-25)
+   - 对齐 Abaqus 使用体验：补充 `readme.org` 的 Abaqus 风格使用路径与操作顺序说明（Part -> Material/Section -> Assembly -> Step -> BC/Load -> Mesh -> Job -> Results）。
+   - 明确下一步增强优先级：增加 Material/Section 独立入口、流程完成状态、按钮统一动作链（New Part/Material/Section/Mesh/Run），并保持 Job/Results 一键串联。
+   - 说明：
+     - 当前已覆盖 Abaqus 主线功能路径，剩余为操作语义和模块入口的整齐化，非核心求解能力缺失。
+** Progress Update (2026-02-24)
+   - Property 面板 `Preview` 标签从“coming soon”替换为真正的派生预览输出：
+     - 显示当前节点摘要（名称、类型、状态）
+     - 输出参数（按 key 排序）与缺失项校验提示
+     - 支持根节点与子节点场景提示
+   - 变更点：
+     - 预览面板在参数变更/命名变更/组选择应用时实时刷新。
+     - 与 `save_params_to_item`、`set_param_value`、`on_apply_groups` 联动，避免编辑后预览不同步。
+   - 编译与回归：`cmake --build build -j4` 通过。
+** Progress Update (2026-02-25)
+   - 继续推进 Abaqus 风格主布局（布局一体化）：
+     - 左中右三栏（Model Tree / Viewport / Property）统一使用 `QFrame`，并补齐边框与底色；更清晰区分模块边界。
+     - 顶部模块区（`moduleBar`）与模块动作区（`moduleToolbar`）引入对象名与高度约束，降低顶部高度占用。
+     - `main_split` 设置分隔条宽度并写入初始三栏宽度比例，避免初次打开时三栏比例失衡。
+     - 全局样式补齐三栏和模块区区块定义，提升视觉一致性与可扫描性。
+   - 编译与回归：`cmake --build build -j4` 通过。
+** Progress Update (2026-02-27)
+   - 顶部模块栏细化拟合：
+     - 开启 `QTabBar::setExpanding(true)` 并关闭滚动按钮，减少顶部占用并避免标签错位。
+     - 模块条快速动作区（module toolbar）与右侧属性面板标题联动显示当前模块。
+     - 构建与回归：`cmake --build build -j4`。
+** Progress Update (2026-02-27)
+   - 模块一键提交流程补齐：
+     - 新增 `ensure_basic_workflow_nodes()` 与 `start_submit_workflow()` 流程入口。
+     - 自动补齐 `Parts/Materials/Sections/Steps` 等最小建模骨架（当用户缺省时），避免一键执行时因空树阻塞。
+     - 一键提交流程支持：
+       1. 自动补齐默认节点；
+       2. 自动回填 mesh 路径（优先 MOOSE 配置 -> Mesh 节点 -> 缺失则触发 3D 自动生成）；
+       3. 同步模型块到输入并注入网格；
+       4. 一步发起提交（Run）。
+     - Job/Mesh 模块新增快速按钮：
+       - `Prepare Workflow Defaults`
+       - `Submit (Mesh + Sync + Run)`
+       - `Generate & Submit`
+     - 构建与回归：`cmake --build build -j4`。
+** Progress Update (2026-02-27)
+   - 左侧流程状态面板（Workflow status）已完成：
+     - Model Tree 顶部新增状态摘要标签，持续显示 Part / Material / Section / Step / BC / Load / Mesh / Job 的条目数量与 readiness（ready/missing）。
+     - `refresh_module_pages()` 每次更新后联动刷新，包含模型修改、复制、删除、导入项目后的链路状态。
+     - 目标：帮助用户快速识别 Abaqus 式流程中断点（例如未建 Step 或未配置 BC）。
+     - 构建与回归：`cmake --build build -j4`。
+** Progress Update (2026-02-27)
+   - 工作区清理与可追溯性：
+     - 忽略常见运行时产物：`out/` 与 `*.gmp.yaml`，避免临时项目文件污染版本控制。
+     - 继续保留关键历史文件（源码/配置模板）供回溯，避免调试环境噪音。
+   - 回归：`cmake --build build -j4`。

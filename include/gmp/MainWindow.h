@@ -9,6 +9,7 @@ class QStackedWidget;
 class QTabBar;
 class QComboBox;
 class QListWidget;
+class QListWidgetItem;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QString;
@@ -60,6 +61,9 @@ class MainWindow : public QMainWindow {
   void export_debug_bundle();
   void refresh_job_table();
   void refresh_results_panel();
+  void sync_results_tree_selection(const QListWidgetItem* row);
+  void start_submit_workflow();
+  void ensure_basic_workflow_nodes();
   int append_job_row(const QString& name, const QVariantMap& params);
   void update_job_row(int row, const QString& name, const QVariantMap& params);
   void update_job_detail(int row);
@@ -73,6 +77,13 @@ class MainWindow : public QMainWindow {
   void load_demo_diffusion(bool run);
   void load_demo_thermo(bool run);
   void load_demo_nonlinear_heat(bool run);
+  void refresh_module_node_list(QListWidget* list,
+                               const QString& root_name,
+                               const QString& empty_text) const;
+  void refresh_module_pages();
+  QString build_step_sequence_preview() const;
+  void refresh_workflow_status();
+  int child_count(const QString& root_name) const;
 
   QTabBar* module_tabs_ = nullptr;
   QTreeWidget* model_tree_ = nullptr;
@@ -85,11 +96,20 @@ class MainWindow : public QMainWindow {
   QListWidget* results_list_ = nullptr;
   QPlainTextEdit* results_preview_ = nullptr;
   QComboBox* results_type_filter_ = nullptr;
+  QListWidget* module_part_list_ = nullptr;
+  QListWidget* module_material_list_ = nullptr;
+  QListWidget* module_section_list_ = nullptr;
+  QListWidget* module_assembly_list_ = nullptr;
+  QListWidget* module_step_list_ = nullptr;
+  QListWidget* module_interaction_list_ = nullptr;
+  QListWidget* module_load_list_ = nullptr;
+  QPlainTextEdit* step_sequence_preview_ = nullptr;
   QString project_path_;
   bool project_dirty_ = false;
   bool suppress_dirty_ = false;
   QLabel* project_status_label_ = nullptr;
   QLabel* dirty_status_label_ = nullptr;
+  QLabel* workflow_status_label_ = nullptr;
   QTreeWidgetItem* active_job_item_ = nullptr;
   int active_job_row_ = -1;
   MoosePanel* moose_panel_ = nullptr;

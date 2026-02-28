@@ -1164,6 +1164,28 @@ void GmshPanel::generate_mesh() {
   on_generate();
 }
 
+void GmshPanel::set_mesh_generation_dim(int dim) {
+#ifndef GMP_ENABLE_GMSH_GUI
+  Q_UNUSED(dim);
+  return;
+#else
+  if (!mesh_dim_) {
+    return;
+  }
+  const int clamped = qBound(1, dim, 3);
+  const int idx = mesh_dim_->findData(clamped);
+  if (idx >= 0) {
+    mesh_dim_->setCurrentIndex(idx);
+    return;
+  }
+  const int auto_idx = mesh_dim_->findData(-1);
+  if (auto_idx >= 0) {
+    mesh_dim_->setCurrentIndex(auto_idx);
+  }
+  append_log(QString("Mesh dimension %1 not available in controls, fallback to Auto.").arg(dim));
+#endif
+}
+
 bool GmshPanel::eventFilter(QObject* obj, QEvent* event) {
   if (event && event->type() == QEvent::FocusIn) {
     auto* edit = qobject_cast<QLineEdit*>(obj);

@@ -18,6 +18,7 @@
 #include <QSet>
 #include <QDialog>
 #include <QPlainTextEdit>
+#include <QFont>
 
 #include "gmp/ComboPopupFix.h"
 
@@ -150,9 +151,18 @@ PropertyEditor::PropertyEditor(QWidget* parent) : QWidget(parent) {
 
   preview_tab_ = new QWidget(this);
   auto* preview_layout = new QVBoxLayout(preview_tab_);
-  auto* preview_label = new QLabel("Preview (coming soon)", preview_tab_);
-  preview_label->setStyleSheet("color: #666;");
-  preview_layout->addWidget(preview_label);
+  preview_summary_label_ = new QLabel("Selected item preview:", preview_tab_);
+  preview_summary_label_->setStyleSheet("font-weight: 600; color: #333;");
+  preview_layout->addWidget(preview_summary_label_);
+  preview_text_ = new QPlainTextEdit(preview_tab_);
+  preview_text_->setReadOnly(true);
+  preview_text_->setLineWrapMode(QPlainTextEdit::NoWrap);
+  preview_text_->setPlaceholderText("Select a node in the model tree.");
+  QFont mono_font = QFont();
+  mono_font.setFamilies({"SFMono-Regular", "Monaco", "Consolas", "Menlo"});
+  mono_font.setStyleHint(QFont::Monospace);
+  preview_text_->setFont(mono_font);
+  preview_layout->addWidget(preview_text_, 1);
   preview_layout->addStretch(1);
   tabs_->addTab(preview_tab_, "Preview");
 
@@ -231,6 +241,7 @@ void PropertyEditor::refresh_form_options() {
   build_form_for_kind(kind);
   update_group_widget_for_kind(kind);
   update_validation();
+  refresh_preview();
 }
 
 bool PropertyEditor::is_root_item() const {
@@ -268,6 +279,7 @@ void PropertyEditor::load_from_item() {
     if (tabs_) {
       tabs_->setEnabled(false);
     }
+    refresh_preview();
     name_edit_->blockSignals(false);
     params_table_->blockSignals(false);
     return;
@@ -318,6 +330,7 @@ void PropertyEditor::load_from_item() {
   build_form_for_kind(kind);
   update_group_widget_for_kind(kind);
   update_validation();
+  refresh_preview();
 }
 
 void PropertyEditor::on_name_changed(const QString& value) {
@@ -325,6 +338,7 @@ void PropertyEditor::on_name_changed(const QString& value) {
     return;
   }
   current_item_->setText(0, value);
+  refresh_preview();
 }
 
 void PropertyEditor::on_add_param() {
@@ -337,6 +351,7 @@ void PropertyEditor::on_add_param() {
   params_table_->setItem(row, 1, new QTableWidgetItem("value"));
   save_params_to_item();
   update_validation();
+  refresh_preview();
 }
 
 void PropertyEditor::on_remove_param() {
@@ -350,6 +365,7 @@ void PropertyEditor::on_remove_param() {
   params_table_->removeRow(ranges.first().topRow());
   save_params_to_item();
   update_validation();
+  refresh_preview();
 }
 
 void PropertyEditor::on_param_changed(int row, int column) {
@@ -377,6 +393,7 @@ void PropertyEditor::on_param_changed(int row, int column) {
     }
   }
   save_params_to_item();
+  refresh_preview();
   if (row >= 0 && (!sync_mode_ || sync_mode_->currentIndex() == 0)) {
     auto* key_item = params_table_->item(row, 0);
     auto* val_item = params_table_->item(row, 1);
@@ -422,6 +439,7 @@ void PropertyEditor::save_params_to_item() {
     params.insert(key, value);
   }
   current_item_->setData(0, kParamsRole, params);
+  refresh_preview();
 }
 
 void PropertyEditor::on_apply_groups() {
@@ -453,6 +471,7 @@ void PropertyEditor::on_apply_groups() {
   }
   current_item_->setData(0, kParamsRole, params);
   load_from_item();
+  refresh_preview();
 }
 
 void PropertyEditor::update_group_widget_for_kind(const QString& kind) {
@@ -910,6 +929,79 @@ void PropertyEditor::on_apply_template() {
   build_form_for_kind(kind);
   update_group_widget_for_kind(kind);
   update_validation();
+  refresh_preview();
+}
+
+void PropertyEditor::refresh_preview() {
+  if (!preview_text_ || !preview_summary_label_) {
+    return;
+  }
+  if (!current_item_) {
+    preview_summary_label_->setText("Selected item preview:");
+    preview_text_->setPlainText("Select a node in the model tree.");
+    return;
+  }
+
+  const bool root = is_root_item();
+  const QString kind =
+      current_item_->data(0, kKindRole).toString().isEmpty()
+          ? current_item_->text(0)
+          : current_item_->data(0, kKindRole).toString();
+  const QVariantMap params = root ? QVariantMap()
+                                 : current_item_->data(0, kParamsRole).toMap();
+  const QString status = params.value("status").toString().isEmpty()
+                             ? params.value("state").toString()
+                             : params.value("status").toString();
+
+  QStringList lines;
+  lines << QString("Node: %1").arg(current_item_->text(0));
+  lines << QString("Kind: %1").arg(kind);
+  lines << QString("Status: %1").arg(status.isEmpty() ? "-" : status);
+
+  if (root) {
+    lines << "";
+    lines << "[Root]";
+    lines << "  Child nodes are configured in the corresponding module tab.";
+    preview_summary_label_->setText(QString("Preview: %1 root").arg(kind));
+    preview_text_->setPlainText(lines.join("\n"));
+    return;
+  }
+
+  const QString block =
+      kind == "Materials" ? "Materials"
+      : kind == "Sections" ? "Sections"
+      : kind == "Steps" ? "Steps"
+      : kind == "BC" ? "BCs"
+      : kind == "Loads" ? "Loads"
+      : kind == "Functions" ? "Functions"
+      : kind == "Variables" ? "Variables"
+      : QString();
+
+  lines << "";
+  lines << "[Input Preview]";
+  if (!block.isEmpty()) {
+    lines << QString("  [%1]").arg(block);
+  }
+  lines << QString("  # name: %1").arg(current_item_->text(0));
+  QStringList keys = params.keys();
+  keys.sort();
+  for (const auto& key_name : keys) {
+    if (key_name == "status" || key_name == "state") {
+      continue;
+    }
+    lines << QString("  %1 = %2").arg(key_name,
+                                       params.value(key_name).toString());
+  }
+
+  QStringList issues = validate_params(kind, params);
+  lines << "";
+  lines << "[Validation]";
+  lines << (issues.isEmpty() ? "  No issues." : "  Missing: " +
+                                              issues.join(", "));
+
+  preview_summary_label_->setText(
+      QString("Preview: %1 (%2)").arg(current_item_->text(0), kind));
+  preview_text_->setPlainText(lines.join("\n"));
 }
 
 void PropertyEditor::build_form_for_kind(const QString& kind) {
@@ -1341,6 +1433,7 @@ void PropertyEditor::set_param_value(const QString& key,
   params_table_->blockSignals(false);
   save_params_to_item();
   update_validation();
+  refresh_preview();
 }
 
 void PropertyEditor::clear_form() {
